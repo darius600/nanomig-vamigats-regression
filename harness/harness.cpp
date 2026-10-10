@@ -159,13 +159,37 @@ static void tick(int c) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 5) { fprintf(stderr, "usage: %s kick adf wait_s out.frame [ocs|ecs]\n", argv[0]); return 2; }
   Verilated::commandArgs(argc, argv);
-  load_kick(argv[1]);
-  file_image[0] = argv[2];
-  wait_s = atof(argv[3]);
-  out_path = argv[4];
-  bool ecs = argc > 5 && !strcmp(argv[5], "ecs");
+  std::vector<std::string> pos;
+  uint8_t chipset = 0x00;
+  uint8_t memory = 0x04;
+
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--chipset" && i + 1 < argc) {
+      chipset = (uint8_t)std::strtoul(argv[++i], nullptr, 0);
+    } else if (arg.rfind("--chipset=", 0) == 0) {
+      chipset = (uint8_t)std::strtoul(arg.c_str() + 10, nullptr, 0);
+    } else if (arg == "--memory" && i + 1 < argc) {
+      memory = (uint8_t)std::strtoul(argv[++i], nullptr, 0);
+    } else if (arg.rfind("--memory=", 0) == 0) {
+      memory = (uint8_t)std::strtoul(arg.c_str() + 9, nullptr, 0);
+    } else {
+      pos.push_back(arg);
+    }
+  }
+
+  if (pos.size() < 4) {
+    fprintf(stderr, "usage: %s <kick> <adf> <wait_s> <out.frame> [--chipset 0xNN] [--memory 0xNN]\n", argv[0]);
+    return 2;
+  }
+
+  static std::string adf_file = pos[1];
+  static std::string out_file = pos[3];
+  load_kick(pos[0].c_str());
+  file_image[0] = adf_file.c_str();
+  wait_s = atof(pos[2].c_str());
+  out_path = out_file.c_str();
 
   tb = new Vnanomig_tb;
   uint32_t *mem = (uint32_t *)sig("TOP.nanomig_tb.sdram_chip", "mem");
@@ -184,11 +208,11 @@ int main(int argc, char **argv) {
   sd_init();
   tb->por = 1;
   tb->reset = 1;
-  tb->memory_config = 0x04;            // 512k chip + 512k slow, like vAmiga's A500_*_1MB
+  tb->memory_config = memory;
   tb->fastram_config = 0;
   tb->floppy_config = 0x5;
   tb->ide_config = 0;
-  tb->chipset_config = ecs ? 0x08 : 0x00;
+  tb->chipset_config = chipset;
   tb->cpu_config = 0;                  // 68000
   tb->turbo_config = 0;                // plain A500 timing
   tb->clk85 = 0;

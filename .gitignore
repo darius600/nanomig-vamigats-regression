@@ -15,3 +15,5 @@
 *.vga
 *.log
 
+# Python
+__pycache__/
