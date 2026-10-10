@@ -177,14 +177,17 @@ def compare_frames(
     raw_identical = False
     raw_status = ""
     if not colors_ok:
-        raw_status = f"missing colors in table: {missing_colors}"
+        raw_status = f"missing colours: {missing_colors}"
     else:
         raw_identical = bool(gen_raw.tobytes() == ref_raw[:expected_size].tobytes())
         raw_status = "byte-identical" if raw_identical else "bytes differ"
 
+    diff_image_path = None
     if out_path:
         gen_raw_path = out_path / f"{variant}.raw"
         gen_raw.tofile(str(gen_raw_path))
+        if diff_count > 0:
+            diff_image_path = str(out_path / f"{variant}_diff.png")
 
     return {
         "class": res_class,
@@ -193,4 +196,5 @@ def compare_frames(
         "raw_byte_identical": raw_identical,
         "raw_status": raw_status,
         "missing_colors": missing_colors,
+        "diff_image": diff_image_path,
     }

@@ -2,6 +2,8 @@
 """Runs a vAmigaTS test under NanoMig Verilator harness and compares the result."""
 
 import argparse
+from datetime import datetime
+import gzip
 import json
 from pathlib import Path
 import shutil
@@ -9,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -21,6 +23,19 @@ from loader.mask import build_mask
 from loader.retrosh import parse_retrosh
 
 BUILD_PROFILE = "tang_nano_20k"
+
+
+def to_repo_rel(path_val: Path | str | None) -> Optional[str]:
+    """Converts a path to be relative to REPO_ROOT."""
+    if path_val is None:
+        return None
+    p = Path(path_val)
+    if not p.is_absolute():
+        return p.as_posix()
+    try:
+        return p.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return p.as_posix()
 
 
 def get_git_sha(repo_dir: Path) -> str:
@@ -42,11 +57,16 @@ def run_test(
     out_dir: Path | str | None = None,
     harness_path: Path | str | None = None,
     rom_path: Path | str | None = None,
+    nanomig_sha: Optional[str] = None,
+    vamigats_sha: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Executes a single test script end-to-end and writes result.json.
     
     Returns the result dict.
     """
+    start_time = datetime.now().astimezone().isoformat()
+    t0 = time.time()
+
     retrosh_path = Path(retrosh_path).resolve()
     config = parse_retrosh(retrosh_path)
 
@@ -54,10 +74,27 @@ def run_test(
         out_path = REPO_ROOT / "runs" / config.variant
     else:
         out_path = Path(out_dir).resolve()
-    out_path.mkdir(parents=True, exist_ok=True)
 
-    nanomig_sha = get_git_sha(REPO_ROOT / "external" / "NanoMig")
-    vamigats_sha = get_git_sha(REPO_ROOT / "external" / "vAmigaTS")
+    # Empty the variant's output directory before a run (stale files / diff PNGs must not survive)
+    if out_path.exists():
+        for item in out_path.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+    else:
+        out_path.mkdir(parents=True, exist_ok=True)
+
+    vamigats_root = REPO_ROOT / "external" / "vAmigaTS"
+    try:
+        rel_retrosh = str(retrosh_path.relative_to(vamigats_root).as_posix())
+    except ValueError:
+        rel_retrosh = str(retrosh_path.as_posix())
+
+    if nanomig_sha is None:
+        nanomig_sha = get_git_sha(REPO_ROOT / "external" / "NanoMig")
+    if vamigats_sha is None:
+        vamigats_sha = get_git_sha(vamigats_root)
 
     result: Dict[str, Any] = {
         "variant": config.variant,
@@ -67,13 +104,21 @@ def run_test(
         "nanomig_sha": nanomig_sha,
         "vamigats_sha": vamigats_sha,
         "build_profile": BUILD_PROFILE,
+        "retrosh_path": rel_retrosh,
+        "harness_args": None,
+        "harness_exit_code": None,
+        "start_time": start_time,
+        "end_time": None,
         "wall_time": 0.0,
+        "differing_pixels": None,
+        "raw_status": None,
     }
 
     # If configuration is unsupported / deviating, do not simulate
     if not config.runnable:
         result["class"] = "DEVIATING_CONFIG"
         result["detail"] = config.deviating_reason or "deviating configuration"
+        result["end_time"] = datetime.now().astimezone().isoformat()
         result_file = out_path / "result.json"
         result_file.write_text(json.dumps(result, indent=2))
         return result
@@ -82,22 +127,24 @@ def run_test(
     harness_bin = Path(harness_path) if harness_path else (REPO_ROOT / "build" / "nanomig_harness")
     if not harness_bin.is_file():
         result["detail"] = f"Harness binary not found at {harness_bin}"
+        result["end_time"] = datetime.now().astimezone().isoformat()
         (out_path / "result.json").write_text(json.dumps(result, indent=2))
         return result
 
     kick_rom = Path(rom_path) if rom_path else (REPO_ROOT / "roms" / "kick13.rom")
     if not kick_rom.is_file():
-        # Also check NanoMig/sim/kick13.rom if present
         alt_rom = REPO_ROOT / "NanoMig" / "sim" / "kick13.rom"
         if alt_rom.is_file():
             kick_rom = alt_rom
         else:
             result["detail"] = f"Kickstart ROM not found at {kick_rom}"
+            result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result
 
     if not config.adf or not config.adf.is_file():
         result["detail"] = f"ADF disk image not found for {retrosh_path}"
+        result["end_time"] = datetime.now().astimezone().isoformat()
         (out_path / "result.json").write_text(json.dumps(result, indent=2))
         return result
 
@@ -126,7 +173,17 @@ def run_test(
             f"0x{config.memory:02x}",
         ]
 
-        t0 = time.time()
+        result["harness_args"] = [
+            to_repo_rel(kick_rom),
+            to_repo_rel(config.adf),
+            str(config.wait_s),
+            f"{config.variant}.frame",
+            "--chipset",
+            f"0x{config.chipset:02x}",
+            "--memory",
+            f"0x{config.memory:02x}",
+        ]
+
         try:
             proc = subprocess.run(
                 cmd,
@@ -137,10 +194,12 @@ def run_test(
             )
             wall_time = time.time() - t0
             result["wall_time"] = round(wall_time, 3)
+            result["harness_exit_code"] = proc.returncode
 
             if proc.returncode != 0:
                 result["class"] = "ERROR"
                 result["detail"] = f"Harness failed (code {proc.returncode}): {proc.stderr[-300:]}"
+                result["end_time"] = datetime.now().astimezone().isoformat()
                 (out_path / "result.json").write_text(json.dumps(result, indent=2))
                 return result
 
@@ -148,12 +207,14 @@ def run_test(
             result["wall_time"] = round(time.time() - t0, 3)
             result["class"] = "ERROR"
             result["detail"] = f"Harness timed out after {timeout_s:.0f}s"
+            result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result
         except Exception as e:
             result["wall_time"] = round(time.time() - t0, 3)
             result["class"] = "ERROR"
             result["detail"] = f"Execution error: {e}"
+            result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result
 
@@ -162,19 +223,28 @@ def run_test(
         if not vga_file.is_file():
             result["class"] = "ERROR"
             result["detail"] = f"Expected output {vga_file} not found"
+            result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result
+
+        # Keep the capture for audit: <variant>.frame.vga.gz in the output directory
+        vga_gz_path = out_path / f"{config.variant}.frame.vga.gz"
+        with open(vga_file, "rb") as f_in, gzip.open(vga_gz_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
 
         try:
             captured_raster = capture_from_vga(vga_file)
         except NotCalibratedError as e:
             result["class"] = "NOT_CALIBRATED"
             result["detail"] = f"uncalibrated geometry: {e.geometry}"
+            result["geometry"] = e.geometry
+            result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result
         except Exception as e:
             result["class"] = "ERROR"
             result["detail"] = f"VGA capture error: {e}"
+            result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result
 
@@ -191,8 +261,13 @@ def run_test(
 
         result["class"] = cmp_result["class"]
         result["detail"] = cmp_result["detail"]
+        result["differing_pixels"] = cmp_result["differing_pixels"]
+        result["raw_status"] = cmp_result["raw_status"]
+        if cmp_result.get("diff_image"):
+            result["diff_image"] = to_repo_rel(cmp_result["diff_image"])
 
     # Write final result.json
+    result["end_time"] = datetime.now().astimezone().isoformat()
     result_file = out_path / "result.json"
     result_file.write_text(json.dumps(result, indent=2))
     return result
