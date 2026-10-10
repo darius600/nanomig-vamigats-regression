@@ -1,0 +1,9 @@
+`verilator_config
+// Signals the harness reads, made visible without touching the NanoMig sources.
+public_flat_rd -module "nanomig" -var "red"
+public_flat_rd -module "nanomig" -var "green"
+public_flat_rd -module "nanomig" -var "blue"
+public_flat_rd -module "nanomig" -var "hbl"
+public_flat_rd -module "nanomig" -var "vbl"
+public_flat_rd -module "agnus_beamcounter" -var "hpos"
+public_flat_rd -module "agnus_beamcounter" -var "vpos"

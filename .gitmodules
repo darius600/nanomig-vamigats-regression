@@ -1,0 +1,6 @@
+[submodule "external/NanoMig"]
+	path = external/NanoMig
+	url = https://github.com/harbaum/NanoMig.git
+[submodule "external/vAmigaTS"]
+	path = external/vAmigaTS
+	url = https://github.com/dirkwhoffmann/vAmigaTS.git

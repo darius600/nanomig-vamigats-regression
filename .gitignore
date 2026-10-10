@@ -1,0 +1,17 @@
+# ROMs
+/roms/
+*.rom
+
+# Build output
+/build/
+/obj_dir/
+*.o
+*.a
+
+# Run output
+/runs/
+*.frame
+*.frame.vga
+*.vga
+*.log
+
