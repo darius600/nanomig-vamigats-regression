@@ -17,3 +17,6 @@
 
 # Python
 __pycache__/
+
+# Generated review images and comparisons
+/side-by-side/
