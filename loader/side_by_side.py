@@ -54,7 +54,7 @@ def panel(img, label):
     return out
 
 
-def render(capture, out_dir, old_dir=None):
+def render(capture, out_dir, old_dir=None, save_original=False):
     variant = capture.name.split(".frame.vga")[0]
     result = capture.parent / "result.json"
     if result.is_file():
@@ -87,8 +87,9 @@ def render(capture, out_dir, old_dir=None):
         return f"{variant}: {verdict}"
 
     old_path, old_img = old
-    (out_dir / "original").mkdir(exist_ok=True)
-    (out_dir / "original" / old_path.name).write_bytes(old_path.read_bytes())
+    if save_original:
+        (out_dir / "original").mkdir(exist_ok=True)
+        (out_dir / "original" / old_path.name).write_bytes(old_path.read_bytes())
     old_ref, old_verdict = differences(old_img, ref, area, "old vs reference")
     _, new_verdict = differences(nano, ref, area, "new vs reference")
     old_new, change = differences(nano, old_img, area, "new vs old NanoMig")
