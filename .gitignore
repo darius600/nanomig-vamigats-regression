@@ -1,4 +1,4 @@
-# ROMs
+# ROMs - never in git
 /roms/
 *.rom
 
@@ -15,8 +15,8 @@
 *.vga
 *.log
 
-# Python
-__pycache__/
-
 # Generated review images and comparisons
 /side-by-side/
+
+# Python
+__pycache__/
