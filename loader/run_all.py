@@ -76,13 +76,26 @@ def main() -> None:
         default=None,
         help="Output directory for reports and results (default: runs)",
     )
+    parser.add_argument(
+        "--harness",
+        default=None,
+        help="Harness binary to run (default: build/nanomig_harness). For experiments "
+             "with a NanoMig checkout other than external/NanoMig.",
+    )
+    parser.add_argument(
+        "--nanomig-dir",
+        default=None,
+        help="NanoMig checkout the harness was built from (default: external/NanoMig); "
+             "its HEAD SHA is recorded in every result and used for resume.",
+    )
     args = parser.parse_args()
 
     t_start = time.time()
     out_dir = Path(args.out).resolve() if args.out else (REPO_ROOT / "runs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    nanomig_sha = get_git_sha(REPO_ROOT / "external" / "NanoMig")
+    nanomig_dir = Path(args.nanomig_dir).resolve() if args.nanomig_dir else REPO_ROOT / "external" / "NanoMig"
+    nanomig_sha = get_git_sha(nanomig_dir)
     vamigats_sha = get_git_sha(VAMIGATS_ROOT)
 
     retrosh_files = collect_retrosh_files(args.subtrees)
@@ -168,6 +181,7 @@ def main() -> None:
                         run_test,
                         rf,
                         var_out,
+                        harness_path=args.harness,
                         nanomig_sha=nanomig_sha,
                         vamigats_sha=vamigats_sha,
                     ): (rf, var_out, cfg)
