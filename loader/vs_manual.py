@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare run results with the hand-made verdicts of NanoMig-vAmigaTS-Results.
+"""Compare run results with the hand-made verdicts of nanomig-vamigats-results (tag manual-2024-08).
 
     python3 -m loader.vs_manual <results dir> <Agnus_Xxx.md> [--out FILE]
 
