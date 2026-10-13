@@ -314,8 +314,13 @@ def publish(
     results_repo: Path | str,
     tag: str = "manual-2024-08",
     jobs: int = 8,
+    with_old: bool = False,
 ) -> None:
-    """Publish a run directory into the results repository."""
+    """Publish a run directory into the results repository.
+
+    The hand verdicts always come from the tag; its old screenshots are added
+    to the images only with with_old (images then grow from 3 to 6 panels).
+    """
     run_path = Path(run_dir).resolve()
     results_path = Path(results_repo).resolve()
 
@@ -434,7 +439,7 @@ def publish(
                 # Render from the run's capture: its result.json sits next to it and
                 # names the .retrosh, so ambiguous variant names (timing1) resolve.
                 src_capture = vga_gz if vga_gz.is_file() else vga_raw
-                render_tasks.append((src_capture, dest_dir, old_dir))
+                render_tasks.append((src_capture, dest_dir, old_dir if with_old else None))
 
         # Run side-by-side renders; a skipped image is an error, not a silent gap
         if render_tasks:
@@ -506,6 +511,11 @@ def main() -> None:
         default=8,
         help="Number of parallel render workers (default: 8)",
     )
+    parser.add_argument(
+        "--with-old",
+        action="store_true",
+        help="Add the tag's old screenshots to the images (6 panels instead of 3)",
+    )
     args = parser.parse_args()
 
     publish(
@@ -513,6 +523,7 @@ def main() -> None:
         results_repo=args.results_repo,
         tag=args.tag,
         jobs=args.jobs,
+        with_old=args.with_old,
     )
 
 
