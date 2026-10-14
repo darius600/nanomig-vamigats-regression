@@ -38,6 +38,7 @@ exactly that for NanoMig:
 | `FAIL` | differs; `result.json` holds the number of differing pixels |
 | `DEVIATING_CONFIG` | the script asks for something NanoMig on a Tang Nano 20k cannot be configured to (a 68010, joystick/mouse/keyboard input); not simulated |
 | `NOT_CALIBRATED` | the frame's raster geometry has no verified crop yet (NTSC, interlace); simulated, not compared |
+| `NO_REFERENCE` | vAmigaTS ships no reference `.raw` for this variant (13 scripts at the pinned commit); not simulated |
 | `ERROR` | the simulation itself failed or timed out |
 
 `denise-ecs-sensitive` is a label, not a class. vAmiga's `A500_ECS_1MB` is an

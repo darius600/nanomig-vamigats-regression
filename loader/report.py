@@ -49,7 +49,7 @@ def build_report_data(
     if report_date is None:
         report_date = datetime.now().astimezone().isoformat()
 
-    classes = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "ERROR"]
+    classes = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "NO_REFERENCE", "ERROR"]
 
     # Normalize subtrees so they don't contain absolute paths
     clean_subtrees = []
@@ -161,9 +161,9 @@ def generate_report_markdown(data: Dict[str, Any]) -> str:
         "",
         "## Summary",
         "",
-        "| Total | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | ERROR |",
-        "|---|---|---|---|---|---|",
-        f"| {summary['total']} | {summary['PASS']} | {summary['FAIL']} | {summary['DEVIATING_CONFIG']} | {summary['NOT_CALIBRATED']} | {summary['ERROR']} |",
+        "| Total | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
+        "|---|---|---|---|---|---|---|",
+        f"| {summary['total']} | {summary['PASS']} | {summary['FAIL']} | {summary['DEVIATING_CONFIG']} | {summary['NOT_CALIBRATED']} | {summary['NO_REFERENCE']} | {summary['ERROR']} |",
         "",
         "### Denise-ECS Sensitivity",
         f"- **PASS:** {ecs['PASS']}",
@@ -171,13 +171,13 @@ def generate_report_markdown(data: Dict[str, Any]) -> str:
         "",
         "## Results by Group",
         "",
-        "| Group | Total | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | ERROR |",
-        "|---|---|---|---|---|---|---|",
+        "| Group | Total | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
+        "|---|---|---|---|---|---|---|---|",
     ]
 
     for grp, counts in data["by_group"].items():
         lines.append(
-            f"| {grp} | {counts['total']} | {counts['PASS']} | {counts['FAIL']} | {counts['DEVIATING_CONFIG']} | {counts['NOT_CALIBRATED']} | {counts['ERROR']} |"
+            f"| {grp} | {counts['total']} | {counts['PASS']} | {counts['FAIL']} | {counts['DEVIATING_CONFIG']} | {counts['NOT_CALIBRATED']} | {counts['NO_REFERENCE']} | {counts['ERROR']} |"
         )
 
     lines.append("")

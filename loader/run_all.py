@@ -144,7 +144,7 @@ def main() -> None:
                     cached.get("nanomig_sha") == nanomig_sha
                     and cached.get("vamigats_sha") == vamigats_sha
                     and cached.get("class")
-                    in ("PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "ERROR")
+                    in ("PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "NO_REFERENCE", "ERROR")
                 ):
                     can_resume = True
             except Exception:

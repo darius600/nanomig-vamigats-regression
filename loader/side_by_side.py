@@ -24,6 +24,7 @@ from loader.capture import CROP_TABLE
 ROOT = Path(__file__).resolve().parent.parent
 VAMIGATS = ROOT / "external" / "vAmigaTS"
 H, W, X0, Y0 = 285, 716, 196, 26
+_written = {}   # (out_dir, variant) -> .retrosh rendered under that name in this process
 LABEL_H, GAP = 24, 8
 
 
@@ -66,7 +67,15 @@ def render(capture, out_dir, old_dir=None, save_original=False):
             return f"{variant}: {len(hits)} .retrosh files found, skipped"
         retrosh = hits[0]
     variant = retrosh.stem
+    if not retrosh.with_suffix(".raw").is_file():
+        return f"{variant}: no reference .raw in vAmigaTS, skipped"
     ref = np.fromfile(retrosh.with_suffix(".raw"), np.uint8).reshape(H, W, 3)
+    # two tests may share a variant name (overscan2); the second one gets its directory in the name
+    stem = variant
+    key = (out_dir.resolve(), variant)
+    if key in _written and _written[key] != retrosh:
+        stem = f"{variant}__{retrosh.parent.parent.name}"
+    _written.setdefault(key, retrosh)
     raster = read_vga(capture)
     geom = (raster.shape[1], raster.shape[0])
     if geom not in CROP_TABLE:
@@ -83,8 +92,8 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     if old is None:
         img = np.hstack([top[0], sep, top[1], sep, diff_panel])
-        cv2.imwrite(str(out_dir / f"{variant}.png"), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        return f"{variant}: {verdict}"
+        cv2.imwrite(str(out_dir / f"{stem}.png"), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        return f"{stem}: {verdict}"
 
     old_path, old_img = old
     if save_original:
@@ -96,8 +105,8 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     row1 = np.hstack([panel(old_img, "old NanoMig (Results repo, compared by hand)"), sep, top[0], sep, top[1]])
     row2 = np.hstack([old_ref, sep, diff_panel, sep, old_new])
     img = np.vstack([row1, np.full((GAP, row1.shape[1], 3), 64, np.uint8), row2])
-    cv2.imwrite(str(out_dir / f"{variant}.png"), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-    return f"{variant}: new {new_verdict}, old {old_verdict}, new vs old {change}"
+    cv2.imwrite(str(out_dir / f"{stem}.png"), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    return f"{stem}: new {new_verdict}, old {old_verdict}, new vs old {change}"
 
 
 def differences(img, ref, area, title):
@@ -147,7 +156,10 @@ def main():
                     help="Results repo with older NanoMig screenshots; adds them as extra panels")
     args = ap.parse_args()
     for c in args.captures:
-        print(render(c, args.out, args.old))
+        try:
+            print(render(c, args.out, args.old))
+        except Exception as e:  # one bad capture must not stop the others
+            print(f"{c.name}: ERROR {type(e).__name__}: {e}, skipped")
 
 
 if __name__ == "__main__":

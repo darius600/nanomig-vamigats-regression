@@ -114,7 +114,7 @@ def generate_group_markdown(
 ) -> str:
     """Generate markdown page for a group (e.g. Agnus_Blitter.md)."""
     group_file_name = group.replace("/", "_")
-    classes = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "ERROR"]
+    classes = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "NO_REFERENCE", "ERROR"]
     counts = {c: 0 for c in classes}
     for r in results:
         c = r.get("class", "ERROR")
@@ -130,7 +130,7 @@ def generate_group_markdown(
         "",
         f"- **NanoMig SHA:** [{nanomig_sha}](https://github.com/harbaum/NanoMig/commit/{nanomig_sha})",
         f"- **vAmigaTS SHA:** [{vamigats_sha}](https://github.com/dirkwhoffmann/vAmigaTS/commit/{vamigats_sha})",
-        f"- **Total:** {total} | **PASS:** {counts['PASS']} | **FAIL:** {counts['FAIL']} | **DEVIATING_CONFIG:** {counts['DEVIATING_CONFIG']} | **NOT_CALIBRATED:** {counts['NOT_CALIBRATED']} | **ERROR:** {counts['ERROR']}",
+        f"- **Total:** {total} | **PASS:** {counts['PASS']} | **FAIL:** {counts['FAIL']} | **DEVIATING_CONFIG:** {counts['DEVIATING_CONFIG']} | **NOT_CALIBRATED:** {counts['NOT_CALIBRATED']} | **NO_REFERENCE:** {counts['NO_REFERENCE']} | **ERROR:** {counts['ERROR']}",
         "",
         "| Test | Variant | Result | Differing px | Hand 2024 | Hand comment | Image |",
         "|---|---|---|---|---|---|---|",
@@ -193,7 +193,7 @@ def generate_test_report_markdown(
     date_str: str,
 ) -> str:
     """Generate TestReport.md content."""
-    classes = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "ERROR"]
+    classes = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "NO_REFERENCE", "ERROR"]
     summary = {c: 0 for c in classes}
     by_group: Dict[str, Dict[str, int]] = {}
 
@@ -223,9 +223,9 @@ def generate_test_report_markdown(
         "",
         "## Summary",
         "",
-        "| Total | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | ERROR |",
-        "|---|---|---|---|---|---|",
-        f"| {len(results)} | {summary['PASS']} | {summary['FAIL']} | {summary['DEVIATING_CONFIG']} | {summary['NOT_CALIBRATED']} | {summary['ERROR']} |",
+        "| Total | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
+        "|---|---|---|---|---|---|---|",
+        f"| {len(results)} | {summary['PASS']} | {summary['FAIL']} | {summary['DEVIATING_CONFIG']} | {summary['NOT_CALIBRATED']} | {summary['NO_REFERENCE']} | {summary['ERROR']} |",
         "",
         "## Groups and Agreement with Hand Verdicts (2024)",
         "",
@@ -269,6 +269,7 @@ def generate_test_report_markdown(
         "- **PASS:** The rendered frame is identical to the vAmigaTS reference at the Amiga's 4 bits per channel inside the cutout, which here also means the rebuilt vAmiga `.raw` is byte-identical.",
         "- **FAIL:** Differences were detected inside the compared area (cutout).",
         "- **NOT_CALIBRATED:** The raster geometry has not been calibrated yet; no image is produced.",
+        "- **NO_REFERENCE:** vAmigaTS ships no reference `.raw` for this variant; it is not simulated.",
         "- **Hand verdicts (2024):** The hand verdicts of August 2024 are kept in tag `manual-2024-08`, whose `_ecs` screenshots came from a simulation without an ECS mode.",
         "",
     ])
@@ -435,7 +436,7 @@ def publish(
             else:
                 capture_to_render = None
 
-            if capture_to_render and r.get("class") != "NOT_CALIBRATED":
+            if capture_to_render and r.get("class") in ("PASS", "FAIL"):
                 # Render from the run's capture: its result.json sits next to it and
                 # names the .retrosh, so ambiguous variant names (timing1) resolve.
                 src_capture = vga_gz if vga_gz.is_file() else vga_raw

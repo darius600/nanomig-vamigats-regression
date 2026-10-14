@@ -123,6 +123,14 @@ def run_test(
         result_file.write_text(json.dumps(result, indent=2))
         return result
 
+    # Without a reference .raw there is nothing to compare against: do not simulate
+    if not retrosh_path.with_suffix(".raw").is_file():
+        result["class"] = "NO_REFERENCE"
+        result["detail"] = "vAmigaTS has no reference .raw for this variant"
+        result["end_time"] = datetime.now().astimezone().isoformat()
+        (out_path / "result.json").write_text(json.dumps(result, indent=2))
+        return result
+
     # Locate harness binary and ROM
     harness_bin = Path(harness_path) if harness_path else (REPO_ROOT / "build" / "nanomig_harness")
     if not harness_bin.is_file():
@@ -262,7 +270,7 @@ def run_test(
         result["class"] = cmp_result["class"]
         result["detail"] = cmp_result["detail"]
         result["differing_pixels"] = cmp_result["differing_pixels"]
-        result["raw_status"] = cmp_result["raw_status"]
+        result["raw_status"] = cmp_result.get("raw_status")
         if cmp_result.get("diff_image"):
             result["diff_image"] = to_repo_rel(cmp_result["diff_image"])
 
