@@ -6,7 +6,9 @@ from datetime import datetime
 import gzip
 import json
 from pathlib import Path
+import resource
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -157,8 +159,16 @@ def run_test(
         return result
 
     # Expected wall time ~ 100x simulation time; timeout = 3x expected wall time
-    expected_wall = config.wait_s * 100.0
-    timeout_s = max(60.0, 3.0 * expected_wall)
+    # A hung simulator keeps burning CPU, while an overloaded machine only stretches
+    # the wall time. So the limit is CPU time (3x the expected ~100x simulated time);
+    # the wall-clock timeout is only a backstop for a process that hangs without
+    # using the CPU.
+    expected_cpu = config.wait_s * 100.0
+    cpu_limit_s = int(max(60.0, 3.0 * expected_cpu))
+    timeout_s = max(600.0, 10.0 * expected_cpu)
+
+    def limit_cpu():
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit_s, cpu_limit_s + 10))
 
     # Private temp directory per run
     with tempfile.TemporaryDirectory(prefix=f"nanomig_{config.variant}_") as tmpdir:
@@ -199,11 +209,18 @@ def run_test(
                 timeout=timeout_s,
                 capture_output=True,
                 text=True,
+                preexec_fn=limit_cpu,
             )
             wall_time = time.time() - t0
             result["wall_time"] = round(wall_time, 3)
             result["harness_exit_code"] = proc.returncode
 
+            if proc.returncode in (-signal.SIGXCPU, -signal.SIGKILL):
+                result["class"] = "ERROR"
+                result["detail"] = f"Harness exceeded its CPU-time limit of {cpu_limit_s}s"
+                result["end_time"] = datetime.now().astimezone().isoformat()
+                (out_path / "result.json").write_text(json.dumps(result, indent=2))
+                return result
             if proc.returncode != 0:
                 result["class"] = "ERROR"
                 result["detail"] = f"Harness failed (code {proc.returncode}): {proc.stderr[-300:]}"
@@ -214,7 +231,7 @@ def run_test(
         except subprocess.TimeoutExpired:
             result["wall_time"] = round(time.time() - t0, 3)
             result["class"] = "ERROR"
-            result["detail"] = f"Harness timed out after {timeout_s:.0f}s"
+            result["detail"] = f"Harness hit the wall-clock backstop of {timeout_s:.0f}s"
             result["end_time"] = datetime.now().astimezone().isoformat()
             (out_path / "result.json").write_text(json.dumps(result, indent=2))
             return result

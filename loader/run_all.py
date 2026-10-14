@@ -4,7 +4,9 @@
 import argparse
 import concurrent.futures
 from datetime import datetime
+import fcntl
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -19,6 +21,31 @@ from loader.run_test import BUILD_PROFILE, get_git_sha, run_test
 from loader.report import write_reports
 
 VAMIGATS_ROOT = REPO_ROOT / "external" / "vAmigaTS"
+
+# One simulating run_all per machine: a second one waits instead of overloading the
+# cores (and running into timeouts). /tmp is shared by everything in the WSL distro.
+LOCK_PATH = Path("/tmp/nanomig-vamigats-run_all.lock")
+
+
+def acquire_machine_lock(out_dir: Path):
+    """Blocks until this process holds the machine lock; returns the open lock file.
+
+    flock is released by the kernel when the process ends, so a killed run never
+    leaves a stale lock behind."""
+    f = open(LOCK_PATH, "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.seek(0)
+        holder = f.read().strip() or "another run_all"
+        print(f"Waiting for the machine lock, held by: {holder}", flush=True)
+        fcntl.flock(f, fcntl.LOCK_EX)
+        print(f"Machine lock acquired at {datetime.now().astimezone().isoformat()}", flush=True)
+    f.seek(0)
+    f.truncate()
+    f.write(f"pid {os.getpid()}, out {out_dir}, since {datetime.now().astimezone().isoformat()}\n")
+    f.flush()
+    return f
 
 
 def collect_retrosh_files(subtrees: List[str]) -> List[Path]:
@@ -87,6 +114,11 @@ def main() -> None:
         default=None,
         help="NanoMig checkout the harness was built from (default: external/NanoMig); "
              "its HEAD SHA is recorded in every result and used for resume.",
+    )
+    parser.add_argument(
+        "--no-lock",
+        action="store_true",
+        help=f"Do not wait for the machine lock ({LOCK_PATH}); only one run_all should simulate at a time.",
     )
     args = parser.parse_args()
 
@@ -170,7 +202,8 @@ def main() -> None:
         # Runnable simulation candidate
         to_simulate.append((rf, variant_out, config))
 
-    # 2. Run simulations in parallel
+    # 2. Run simulations in parallel - one simulating run_all per machine
+    machine_lock = acquire_machine_lock(out_dir) if (to_simulate and not args.no_lock) else None
     interrupted = False
     try:
         if to_simulate:
