@@ -36,6 +36,43 @@ def to_repo_rel(path_val: Path | str | None) -> Optional[str]:
         return p.as_posix()
 
 
+# FAIL size bands, in differing pixels of the 716 x 285 = 204060 compared pixels
+FAIL_BANDS = [(20, "<= 20"), (200, "21-200"), (2000, "201-2000"), (20000, "2001-20000"), (None, "> 20000")]
+
+
+def fail_size_rows(results: List[Dict[str, Any]]) -> Dict[str, List[int]]:
+    """Per group: [PASS, FAILs in each FAIL_BANDS band]."""
+    rows: Dict[str, List[int]] = {}
+    for r in results:
+        res_class = r.get("class")
+        if res_class not in ("PASS", "FAIL"):
+            continue
+        row = rows.setdefault(get_vamigats_group(r.get("retrosh_path", "")), [0] * (1 + len(FAIL_BANDS)))
+        if res_class == "PASS":
+            row[0] += 1
+            continue
+        px = r.get("differing_pixels") or 0
+        for i, (limit, _) in enumerate(FAIL_BANDS):
+            if limit is None or px <= limit:
+                row[1 + i] += 1
+                break
+    return {g: rows[g] for g in sorted(rows)}
+
+
+def fail_size_markdown(rows: Dict[str, List[int]]) -> List[str]:
+    """Markdown table for fail_size_rows(), with a total line."""
+    lines = [
+        "| Group | PASS | " + " | ".join(f"FAIL {label} px" for _, label in FAIL_BANDS) + " |",
+        "|---|" + "---:|" * (1 + len(FAIL_BANDS)),
+    ]
+    total = [0] * (1 + len(FAIL_BANDS))
+    for g, row in rows.items():
+        total = [a + b for a, b in zip(total, row)]
+        lines.append(f"| {g} | " + " | ".join(str(v) for v in row) + " |")
+    lines.append("| **Total** | " + " | ".join(f"**{v}**" for v in total) + " |")
+    return lines
+
+
 def build_report_data(
     results: List[Dict[str, Any]],
     subtrees: List[str],
@@ -137,6 +174,7 @@ def build_report_data(
         "summary": summary,
         "denise_ecs_sensitive": ecs_sensitive,
         "by_group": sorted_groups,
+        "fail_sizes": fail_size_rows(results),
         "failures": failures,
         "deviating_config": deviating_config,
         "not_calibrated": not_calibrated,
@@ -180,6 +218,12 @@ def generate_report_markdown(data: Dict[str, Any]) -> str:
             f"| {grp} | {counts['total']} | {counts['PASS']} | {counts['FAIL']} | {counts['DEVIATING_CONFIG']} | {counts['NOT_CALIBRATED']} | {counts['NO_REFERENCE']} | {counts['ERROR']} |"
         )
 
+    lines.append("")
+    lines.append("## How far off the FAILs are")
+    lines.append("")
+    lines.append("Differing pixels per FAIL, of 204060 compared. A Copper or DMA stripe one colour clock off already costs thousands.")
+    lines.append("")
+    lines.extend(fail_size_markdown(data.get("fail_sizes", {})))
     lines.append("")
     lines.append("## Failures")
     lines.append("")

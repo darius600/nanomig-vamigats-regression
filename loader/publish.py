@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from loader.report import get_vamigats_group
+from loader.report import fail_size_markdown, fail_size_rows, get_vamigats_group
 from loader.run_test import get_git_sha
 from loader.side_by_side import render
 
@@ -263,6 +263,14 @@ def generate_test_report_markdown(
     )
 
     lines.extend([
+        "",
+        "## How far off the FAILs are",
+        "",
+        "Differing pixels per FAIL, of the 716 x 285 = 204060 compared pixels. Most tests draw their result as "
+        "Copper or DMA stripes, so a stripe one colour clock off already costs thousands of pixels: the size says "
+        "more about the kind of difference than about how close NanoMig is.",
+        "",
+        *fail_size_markdown(fail_size_rows(results)),
         "",
         "## How to read",
         "",
