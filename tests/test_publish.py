@@ -133,15 +133,15 @@ class TestPublish(unittest.TestCase):
 
         # Table rows
         self.assertIn(
-            "| Agnus/Copper/cop1 | cop1_pass | PASS | 0 | ✅ Identical | matches | [cop1_pass.png](Agnus/Copper/cop1/cop1_pass.png) |",
+            "| Agnus/Copper/cop1 | cop1_pass | PASS | 0 |  | ✅ Identical | matches | [cop1_pass.png](Agnus/Copper/cop1/cop1_pass.png) |",
             md,
         )
         self.assertIn(
-            "| Agnus/Copper/cop2 | cop2_fail | FAIL | 42 | ❌ Different | broken copper | [cop2_fail.png](Agnus/Copper/cop2/cop2_fail.png) |",
+            "| Agnus/Copper/cop2 | cop2_fail | FAIL | 42 |  | ❌ Different | broken copper | [cop2_fail.png](Agnus/Copper/cop2/cop2_fail.png) |",
             md,
         )
         self.assertIn(
-            "| Agnus/Copper/cop3 | cop3_nc | NOT_CALIBRATED | 908x524 |  |  | — |",
+            "| Agnus/Copper/cop3 | cop3_nc | NOT_CALIBRATED | 908x524 |  |  |  | — |",
             md,
         )
 

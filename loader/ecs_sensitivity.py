@@ -13,21 +13,36 @@ import re
 from typing import Optional, Set
 
 
+_TOKEN = re.compile(r"\s*(\$[0-9a-fA-F]+|0[xX][0-9a-fA-F]+|%[01]+|\d+|<<|>>|[|&+\-~()])")
+
+
 def _parse_asm_int(val_str: str) -> Optional[int]:
-    """Parses an assembly literal string into an integer."""
+    """Parses an assembly constant into an integer: a literal ($hex, 0x, %bin,
+    decimal) or a constant expression of literals with | & + - ~ << >> and
+    parentheses, e.g. (1<<12)|$240. Anything else (symbols, registers) -> None."""
     s = val_str.strip().lstrip("#").strip()
     if not s:
         return None
+    parts, pos = [], 0
+    while pos < len(s):
+        m = _TOKEN.match(s, pos)
+        if not m:
+            return None
+        tok = m.group(1)
+        if tok.startswith("$"):
+            tok = str(int(tok[1:], 16))
+        elif tok[:2] in ("0x", "0X"):
+            tok = str(int(tok[2:], 16))
+        elif tok.startswith("%"):
+            tok = str(int(tok[1:], 2))
+        parts.append(tok)
+        pos = m.end()
     try:
-        if s.startswith("$"):
-            return int(s[1:], 16)
-        if s.startswith("0x") or s.startswith("0X"):
-            return int(s[2:], 16)
-        if s.startswith("%"):
-            return int(s[1:], 2)
-        return int(s, 10)
-    except ValueError:
+        # only integer literals and operators reach eval, checked by _TOKEN above
+        value = eval(" ".join(parts), {"__builtins__": {}}, {})
+    except Exception:
         return None
+    return value if isinstance(value, int) else None
 
 
 def _check_line(line: str) -> bool:
@@ -47,6 +62,20 @@ def _check_line(line: str) -> bool:
     # Check for direct mentions/writes of ECS-only registers
     if re.search(r"\b(DIWHIGH|BPLCON3|DENISEID)\b", line, re.IGNORECASE):
         return True
+
+    # DENISEID read by address instead of by name (e.g. move.w $DFF07C,d0)
+    if re.search(r"\$0*dff07c\b", line, re.IGNORECASE):
+        return True
+
+    # SuperHires through BPLCON0 bit 6. Literal values only: every test writes BPLCON0.
+    if re.search(r"\bBPLCON0\b", line, re.IGNORECASE):
+        dc_match = re.search(r"\bdc\.w\s+bplcon0\s*,\s*([^,\s]+)", line, re.IGNORECASE)
+        move_match = re.search(r"\bmove(?:\.w)?\s+(#[^,]+)\s*,\s*bplcon0\b", line, re.IGNORECASE)
+        for m in (dc_match, move_match):
+            if m:
+                parsed = _parse_asm_int(m.group(1).strip())
+                if parsed is not None and (parsed >> 6) & 1:
+                    return True
 
     # Check for writes to BPLCON2
     if re.search(r"\bBPLCON2\b", line, re.IGNORECASE):

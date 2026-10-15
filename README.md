@@ -9,6 +9,11 @@ start at its [TestReport.md](https://github.com/darius600/nanomig-vamigats-resul
 
 ## What it does
 
+The `.raw` references are **screenshots made by vAmiga**; only the photos in the vAmigaTS test
+folders show real hardware. A `PASS` means identical to vAmiga. [docs/REFERENCES.md](docs/REFERENCES.md)
+explains the references, the compared machines and the known cases where a reference
+contradicts the photo.
+
 vAmigaTS tests itself the same way: a `.retrosh` script boots Kickstart 1.3,
 inserts the test's ADF, waits, and dumps the visible frame into a `.raw` file;
 `diff` against the stored reference decides pass or fail. This repository does
@@ -41,7 +46,9 @@ exactly that for NanoMig:
 | `NO_REFERENCE` | vAmigaTS ships no reference `.raw` for this variant (13 scripts at the pinned commit); not simulated |
 | `ERROR` | the simulation itself failed or timed out |
 
-`denise-ecs-sensitive` is a label, not a class. vAmiga's `A500_ECS_1MB` is an
+Labels never change a class. `reference-contradicts-photo` marks the variants whose vAmigaTS
+hardware photo shows something else than the reference (see docs/REFERENCES.md).
+`denise-ecs-sensitive` is a label, too. vAmiga's `A500_ECS_1MB` is an
 ECS Agnus with an OCS Denise, as in the A500 rev. 6A. NanoMig has one ECS
 switch for both chips, so its ECS mode also enables the ECS-only Denise
 features (KILLEHB, DIWHIGH, DENISEID, SuperHires, BRDRBLNK). Tests whose

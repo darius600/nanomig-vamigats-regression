@@ -28,6 +28,18 @@ class RunConfig:
     retrosh_path: Optional[Path] = None
 
 
+# The .raw references are vAmiga screenshots; the vAmigaTS hardware photos of these
+# tests show something else (see docs/REFERENCES.md): a
+# real A500 with ECS Agnus does not draw the clean image vAmiga drew. A FAIL here
+# says nothing about real hardware. The label never changes PASS/FAIL.
+REFERENCE_CONTRADICTS_PHOTO = (
+    "Agnus/DIW/DIWV/diwv9/diwv9_ecs.retrosh",
+    "Agnus/DIW/DIWV/diwv12/diwv12_ecs.retrosh",
+    "Agnus/DIW/DIWV/diwv13/diwv13_ecs.retrosh",
+    "Agnus/DIW/DIWV/diwv14/diwv14_ecs.retrosh",
+)
+
+
 def parse_retrosh(path: Path | str) -> RunConfig:
     """Parses a .retrosh file into a RunConfig.
     
@@ -93,8 +105,9 @@ def parse_retrosh(path: Path | str) -> RunConfig:
                     chipset = 0x08
                     memory = 0x04
                 elif model == "A500_PLUS_1MB":
+                    # vAmiga: ECS Agnus 2 MB + ECS Denise, 512 KB chip + 512 KB slow
                     chipset = 0x08
-                    memory = 0x01
+                    memory = 0x04
                 else:
                     runnable = False
                     if not deviating_reason:
@@ -155,6 +168,9 @@ def parse_retrosh(path: Path | str) -> RunConfig:
     if model == "A500_ECS_1MB":
         if is_ecs_sensitive(test_dir):
             labels.append("denise-ecs-sensitive")
+
+    if any(path.as_posix().endswith(p) for p in REFERENCE_CONTRADICTS_PHOTO):
+        labels.append("reference-contradicts-photo")
 
     return RunConfig(
         variant=variant,
