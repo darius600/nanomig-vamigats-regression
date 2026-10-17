@@ -19,7 +19,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from loader.capture import CROP_TABLE
+from loader.capture import CROP_TABLE, NTSC_GEOMETRIES, NotCalibratedError, crop_vga_raster
+from loader.compare import compared_area
+from loader.mask import build_mask
+from loader.retrosh import parse_retrosh
 
 ROOT = Path(__file__).resolve().parent.parent
 VAMIGATS = ROOT / "external" / "vAmigaTS"
@@ -32,16 +35,6 @@ def read_vga(path):
     data = gzip.open(path, "rb").read() if path.suffix == ".gz" else path.read_bytes()
     w, h = np.frombuffer(data[:8], np.uint32)
     return np.frombuffer(data[8:8 + int(w) * int(h) * 3], np.uint8).reshape(int(h), int(w), 3)
-
-
-def compared_area(retrosh):
-    yy, xx = np.mgrid[0:H, 0:W]
-    ax, ay = xx + X0, yy + Y0
-    for line in retrosh.read_text().splitlines():
-        if line.startswith("screenshot set cutout"):
-            x1, y1, x2, y2 = map(int, line.split()[3:7])
-            return (ax >= x1) & (ax < x2) & (ay >= y1) & (ay < y2)
-    return np.ones((H, W), bool)
 
 
 def q4(img):
@@ -77,12 +70,13 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     stem = image_stem(out_dir, retrosh, variant)
     raster = read_vga(capture)
     geom = (raster.shape[1], raster.shape[0])
-    if geom not in CROP_TABLE:
+    try:
+        nano = crop_vga_raster(raster, *geom)
+    except NotCalibratedError:
         return f"{variant}: raster {geom[0]}x{geom[1]} not calibrated, skipped"
-    cx, cy = CROP_TABLE[geom]
-    nano = raster[cy:cy + 2 * H, cx:cx + W][1::2][:H]
 
-    area = compared_area(retrosh)
+    # the same compared area as loader.compare (cutout, NTSC rows)
+    area, _ = compared_area(build_mask(parse_retrosh(retrosh).cutout), ref, geom in NTSC_GEOMETRIES)
     diff_panel, verdict = differences(nano, ref, area, "differences")
     sep = np.full((LABEL_H + H, GAP, 3), 64, np.uint8)
     top = [panel(nano, f"NanoMig  {variant}"), panel(ref, "vAmigaTS reference")]

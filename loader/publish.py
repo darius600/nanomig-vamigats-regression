@@ -379,10 +379,10 @@ def generate_test_report_markdown(
         "- **FAIL:** Differences were found inside the compared area (cutout). The group pages give the number "
         "of differing pixels and link the image.",
         "- **DEVIATING_CONFIG:** The script asks for something NanoMig on a Tang Nano 20k cannot be configured "
-        "to: a 68010, joystick, mouse or keyboard input, further floppy drives. Not simulated; the reason is on "
-        "the group page.",
-        "- **NOT_CALIBRATED:** Simulated, but the raster (NTSC, interlace) has no verified crop yet, so it is "
-        "not compared.",
+        "to: a 68010, further floppy drives. Not simulated; the reason is on the group page.",
+        "- **NOT_CALIBRATED:** Simulated, but the raster has no verified crop yet, so it is not compared.",
+        "- **NTSC** frames are compared on the 237 rows an NTSC beam reaches; the `_ocs` NTSC references are "
+        "black there, so their PASS says little.",
         "- **NO_REFERENCE:** vAmigaTS ships no reference `.raw` for this variant; not simulated.",
         "- **ERROR:** The simulation itself failed or exceeded its time limit. Rerun it.",
         "- **`raw_status` \"missing colours\"** (in `.result.json`): NanoMig produced a colour that no reference "
@@ -459,6 +459,21 @@ def generate_readme_markdown() -> str:
     return "\n".join(lines)
 
 
+def check_publishable(results: List[Tuple[Path, Dict[str, Any]]]) -> None:
+    """Only single runs are published: a result simulated from a zygote (run_all
+    --zygote, a development tool) is refused, so is one of an uncommitted checkout."""
+    forked = [str(rf) for rf, r in results if "zygote_fork_at_s" in r]
+    dirty = [str(rf) for rf, r in results if str(r.get("nanomig_sha", "")).endswith("-dirty")]
+    problems = []
+    if forked:
+        problems.append(f"{len(forked)} results come from a zygote run (rerun them without --zygote), "
+                        f"e.g. {forked[0]}")
+    if dirty:
+        problems.append(f"{len(dirty)} results come from an uncommitted NanoMig checkout, e.g. {dirty[0]}")
+    if problems:
+        raise RuntimeError("refusing to publish: " + "; ".join(problems))
+
+
 def _render_worker(task: Tuple[Path, Path, Path]) -> str:
     """Worker function for parallel rendering."""
     vga_path, dest_dir, old_dir = task
@@ -503,6 +518,7 @@ def publish(
         # the run's diff image is not published; the side-by-side image replaces it
         data.pop("diff_image", None)
         results_data.append((rf, data))
+    check_publishable(results_data)
 
     # Read run metadata from report.json if available
     report_json_path = run_path / "report.json"

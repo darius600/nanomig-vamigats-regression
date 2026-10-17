@@ -144,7 +144,7 @@ class TestSelftests(unittest.TestCase):
         a cpu set revision 68010 script -> DEVIATING_CONFIG 'cpu 68010';
         a mem set SLOW_RAM 0 script -> memory 0x00;
         an NTSC script -> chipset bit 1 set;
-        a joystick script -> DEVIATING_CONFIG (input).
+        joystick, keyboard and mouse scripts -> input events at the summed wait times.
         """
         # cross1_ocs
         cfg1 = parse_retrosh(
@@ -186,12 +186,24 @@ class TestSelftests(unittest.TestCase):
         )
         self.assertTrue(bool(cfg5.chipset & 0x02))
 
-        # joystick script
+        # joystick script: held from the start, on the mouse port (nanomig joystick0)
         cfg6 = parse_retrosh(
             TS / "Mainboard" / "Ports" / "JOYxDAT" / "joy0dat" / "joy0dat_1.retrosh"
         )
-        self.assertFalse(cfg6.runnable)
-        self.assertEqual(cfg6.deviating_reason, "input")
+        self.assertTrue(cfg6.runnable)
+        self.assertEqual(cfg6.events, [(0.0, "joy0", 0x02)])
+        self.assertEqual(cfg6.wait_s, 9.0)
+
+        # keyboard: waits add up, the key is released half a second after the press
+        cfg7 = parse_retrosh(TS / "Mainboard" / "Ports" / "Keyboard" / "noack1" / "noack1.retrosh")
+        self.assertTrue(cfg7.runnable)
+        self.assertEqual(cfg7.wait_s, 17.0)
+        self.assertEqual(cfg7.events, [(9.0, "key", 40), (9.5, "key", 40 | 0x80)])
+
+        # mouse: right button pressed after 16 s, released after 16.5 s
+        cfg8 = parse_retrosh(TS / "Denise" / "Misc" / "ThirdParty" / "losso" / "bplcon_rmb2_OCS.retrosh")
+        self.assertEqual(cfg8.wait_s, 18.0)
+        self.assertEqual(cfg8.events, [(16.0, "mouse", 0x2), (16.5, "mouse", 0)])
 
 
 if __name__ == "__main__":

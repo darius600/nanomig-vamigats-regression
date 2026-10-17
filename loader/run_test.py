@@ -13,13 +13,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from loader.capture import NotCalibratedError, capture_from_vga
+from loader.capture import NotCalibratedError, read_capture
 from loader.compare import compare_frames
 from loader.mask import build_mask
 from loader.retrosh import parse_retrosh
@@ -75,6 +75,99 @@ def get_git_revision(repo_dir: Path) -> str:
     return f"{sha}-dirty" if res.stdout.strip() else sha
 
 
+VAMIGATS_ROOT = REPO_ROOT / "external" / "vAmigaTS"
+
+
+def prepare_out_dir(out_path: Path) -> None:
+    """Empty the variant's output directory before a run (stale files / diff PNGs must not survive)."""
+    if out_path.exists():
+        for item in out_path.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+    else:
+        out_path.mkdir(parents=True, exist_ok=True)
+
+
+def new_result(config: Any, retrosh_path: Path, nanomig_sha: str, vamigats_sha: str,
+               regression_sha: str, start_time: str) -> Dict[str, Any]:
+    """The result.json skeleton every run fills in (single runs and zygote runs alike)."""
+    try:
+        rel_retrosh = str(retrosh_path.relative_to(VAMIGATS_ROOT).as_posix())
+    except ValueError:
+        rel_retrosh = str(retrosh_path.as_posix())
+    return {
+        "variant": config.variant,
+        "class": "ERROR",
+        "detail": "",
+        "labels": config.labels,
+        "nanomig_sha": nanomig_sha,
+        "vamigats_sha": vamigats_sha,
+        "regression_sha": regression_sha,
+        "build_profile": BUILD_PROFILE,
+        "retrosh_path": rel_retrosh,
+        "harness_args": None,
+        "harness_exit_code": None,
+        "start_time": start_time,
+        "end_time": None,
+        "wall_time": 0.0,
+        "differing_pixels": None,
+        "raw_status": None,
+    }
+
+
+def harness_args_for(kick_rom: Path, config: Any) -> List[str]:
+    """The harness arguments of a run as recorded in result.json (paths repo-relative)."""
+    return [
+        to_repo_rel(kick_rom),
+        to_repo_rel(config.adf),
+        str(config.wait_s),
+        f"{config.variant}.frame",
+        "--chipset",
+        f"0x{config.chipset:02x}",
+        "--memory",
+        f"0x{config.memory:02x}",
+    ] + [a for t, kind, value in config.events for a in ("--event", f"{t},{kind},0x{value:02x}")]
+
+
+def evaluate_capture(
+    vga_file: Path, retrosh_path: Path, config: Any, out_path: Path, result: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Crops a capture, compares it with the reference and fills in the result's
+    class, detail, differing pixels and raw_status. Used after a simulation and by
+    loader.recompare on a stored capture."""
+    result.pop("geometry", None)
+    result.pop("diff_image", None)
+    try:
+        captured_raster, ntsc_capture = read_capture(vga_file)
+    except NotCalibratedError as e:
+        result["class"] = "NOT_CALIBRATED"
+        result["detail"] = f"uncalibrated geometry: {e.geometry}"
+        result["geometry"] = e.geometry
+        return result
+    except Exception as e:
+        result["class"] = "ERROR"
+        result["detail"] = f"VGA capture error: {e}"
+        return result
+
+    cmp_result = compare_frames(
+        captured_raster,
+        retrosh_path.with_suffix(".raw"),
+        build_mask(config.cutout),
+        config.variant,
+        out_dir=out_path,
+        ntsc_capture=ntsc_capture,
+    )
+    result["class"] = cmp_result["class"]
+    result["detail"] = cmp_result["detail"]
+    result["differing_pixels"] = cmp_result["differing_pixels"]
+    result["raw_status"] = cmp_result.get("raw_status")
+    if cmp_result.get("diff_image"):
+        result["diff_image"] = to_repo_rel(cmp_result["diff_image"])
+    return result
+
+
 def run_test(
     retrosh_path: Path | str,
     out_dir: Path | str | None = None,
@@ -98,48 +191,15 @@ def run_test(
         out_path = REPO_ROOT / "runs" / config.variant
     else:
         out_path = Path(out_dir).resolve()
-
-    # Empty the variant's output directory before a run (stale files / diff PNGs must not survive)
-    if out_path.exists():
-        for item in out_path.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-    else:
-        out_path.mkdir(parents=True, exist_ok=True)
-
-    vamigats_root = REPO_ROOT / "external" / "vAmigaTS"
-    try:
-        rel_retrosh = str(retrosh_path.relative_to(vamigats_root).as_posix())
-    except ValueError:
-        rel_retrosh = str(retrosh_path.as_posix())
+    prepare_out_dir(out_path)
 
     if nanomig_sha is None:
         nanomig_sha = get_git_revision(REPO_ROOT / "external" / "NanoMig")
     if vamigats_sha is None:
-        vamigats_sha = get_git_sha(vamigats_root)
+        vamigats_sha = get_git_sha(VAMIGATS_ROOT)
     if regression_sha is None:
         regression_sha = get_git_revision(REPO_ROOT)
-
-    result: Dict[str, Any] = {
-        "variant": config.variant,
-        "class": "ERROR",
-        "detail": "",
-        "labels": config.labels,
-        "nanomig_sha": nanomig_sha,
-        "vamigats_sha": vamigats_sha,
-        "regression_sha": regression_sha,
-        "build_profile": BUILD_PROFILE,
-        "retrosh_path": rel_retrosh,
-        "harness_args": None,
-        "harness_exit_code": None,
-        "start_time": start_time,
-        "end_time": None,
-        "wall_time": 0.0,
-        "differing_pixels": None,
-        "raw_status": None,
-    }
+    result = new_result(config, retrosh_path, nanomig_sha, vamigats_sha, regression_sha, start_time)
 
     # If configuration is unsupported / deviating, do not simulate
     if not config.runnable:
@@ -158,8 +218,10 @@ def run_test(
         (out_path / "result.json").write_text(json.dumps(result, indent=2))
         return result
 
-    # Locate harness binary and ROM
-    harness_bin = Path(harness_path) if harness_path else (REPO_ROOT / "build" / "nanomig_harness")
+    # Locate harness binary and ROM; scripts with joystick, mouse or keyboard input need
+    # the input harness (HARNESS_INPUTS=1 harness/build.sh)
+    default_dir = "build-inputs" if config.events else "build"
+    harness_bin = Path(harness_path) if harness_path else (REPO_ROOT / default_dir / "nanomig_harness")
     if not harness_bin.is_file():
         result["detail"] = f"Harness binary not found at {harness_bin}"
         result["end_time"] = datetime.now().astimezone().isoformat()
@@ -210,17 +272,8 @@ def run_test(
             "--memory",
             f"0x{config.memory:02x}",
         ]
-
-        result["harness_args"] = [
-            to_repo_rel(kick_rom),
-            to_repo_rel(config.adf),
-            str(config.wait_s),
-            f"{config.variant}.frame",
-            "--chipset",
-            f"0x{config.chipset:02x}",
-            "--memory",
-            f"0x{config.memory:02x}",
-        ]
+        cmd += [a for t, kind, value in config.events for a in ("--event", f"{t},{kind},0x{value:02x}")]
+        result["harness_args"] = harness_args_for(kick_rom, config)
 
         try:
             proc = subprocess.run(
@@ -277,39 +330,7 @@ def run_test(
         with open(vga_file, "rb") as f_in, gzip.open(vga_gz_path, "wb") as f_out:
             shutil.copyfileobj(f_in, f_out)
 
-        try:
-            captured_raster = capture_from_vga(vga_file)
-        except NotCalibratedError as e:
-            result["class"] = "NOT_CALIBRATED"
-            result["detail"] = f"uncalibrated geometry: {e.geometry}"
-            result["geometry"] = e.geometry
-            result["end_time"] = datetime.now().astimezone().isoformat()
-            (out_path / "result.json").write_text(json.dumps(result, indent=2))
-            return result
-        except Exception as e:
-            result["class"] = "ERROR"
-            result["detail"] = f"VGA capture error: {e}"
-            result["end_time"] = datetime.now().astimezone().isoformat()
-            (out_path / "result.json").write_text(json.dumps(result, indent=2))
-            return result
-
-        # Compare with reference .raw
-        ref_raw_path = retrosh_path.with_suffix(".raw")
-        mask = build_mask(config.cutout)
-        cmp_result = compare_frames(
-            captured_raster,
-            ref_raw_path,
-            mask,
-            config.variant,
-            out_dir=out_path,
-        )
-
-        result["class"] = cmp_result["class"]
-        result["detail"] = cmp_result["detail"]
-        result["differing_pixels"] = cmp_result["differing_pixels"]
-        result["raw_status"] = cmp_result.get("raw_status")
-        if cmp_result.get("diff_image"):
-            result["diff_image"] = to_repo_rel(cmp_result["diff_image"])
+        evaluate_capture(vga_file, retrosh_path, config, out_path, result)
 
     # Write final result.json
     result["end_time"] = datetime.now().astimezone().isoformat()

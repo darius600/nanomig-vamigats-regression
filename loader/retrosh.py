@@ -27,6 +27,19 @@ class RunConfig:
     deviating_reason: Optional[str] = None
     retrosh_path: Optional[Path] = None
     machine: Optional[str] = None   # vAmiga's machine, e.g. A500_OCS_1MB
+    # input events for the input harness: (simulated time in s, kind, value), see harness.cpp
+    events: List[Tuple[float, str, int]] = field(default_factory=list)
+
+
+# vAmiga's input commands as NanoMig's input bits. Joystick bits as on nanomig's
+# joystick0/1 ports, [fire4,fire3,fire2,fire,up,down,left,right]; vAmiga's joystick 1 is
+# the mouse port (nanomig joystick0), joystick 2 the joystick port (joystick1).
+JOY_X = {"left": 0x02, "right": 0x01}
+JOY_Y = {"up": 0x08, "down": 0x04}
+MOUSE_BUTTONS = {"left": 0x1, "right": 0x2, "middle": 0x4}   # hid.v order
+# vAmiga's "press" commands release after half a second (Keyboard KEY_RELEASE delay 0.5,
+# Mouse::pressAndRelease* duration SEC(0.5))
+PRESS_S = 0.5
 
 
 # The .raw references are vAmiga screenshots; the vAmigaTS hardware photos of these
@@ -60,6 +73,9 @@ def parse_retrosh(path: Path | str) -> RunConfig:
     runnable = True
     deviating_reason = None
     model = None
+    elapsed = 0.0          # simulated seconds up to the current line (sum of the waits)
+    events: List[Tuple[float, str, int]] = []
+    joy = {1: [0, 0], 2: [0, 0]}   # per vAmiga port: x bits, y bits
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -74,11 +90,31 @@ def parse_retrosh(path: Path | str) -> RunConfig:
                 deviating_reason = "cpu 68010"
             continue
 
-        # joystick, mouse, keyboard
+        # Input: joystick <1|2> pull <dir>, mouse 1 press <button>, keyboard press <code>
+        m = re.match(r"^joystick\s+([12])\s+pull\s+(left|right|up|down)$", line, re.IGNORECASE)
+        if m:
+            port, direction = int(m.group(1)), m.group(2).lower()
+            if direction in JOY_X:
+                joy[port][0] = JOY_X[direction]
+            else:
+                joy[port][1] = JOY_Y[direction]
+            events.append((elapsed, f"joy{port - 1}", joy[port][0] | joy[port][1]))
+            continue
+        m = re.match(r"^mouse\s+1\s+press\s+(left|right|middle)$", line, re.IGNORECASE)
+        if m:
+            events.append((elapsed, "mouse", MOUSE_BUTTONS[m.group(1).lower()]))
+            events.append((elapsed + PRESS_S, "mouse", 0))
+            continue
+        m = re.match(r"^keyboard\s+press\s+(\S+)$", line, re.IGNORECASE)
+        if m:
+            code = int(m.group(1), 0) if not m.group(1).startswith("$") else int(m.group(1)[1:], 16)
+            events.append((elapsed, "key", code & 0x7F))
+            events.append((elapsed + PRESS_S, "key", (code & 0x7F) | 0x80))
+            continue
         if re.match(r"^(joystick|mouse|keyboard)\b", line, re.IGNORECASE):
             runnable = False
             if not deviating_reason:
-                deviating_reason = "input"
+                deviating_reason = f"unsupported input: {line}"
             continue
 
         # df1-3 connect
@@ -124,7 +160,9 @@ def parse_retrosh(path: Path | str) -> RunConfig:
             parts = line.split()
             if len(parts) >= 2:
                 try:
-                    wait_s = float(parts[1])
+                    # waits add up; input commands between them happen at the sum so far
+                    elapsed += float(parts[1])
+                    wait_s = elapsed
                 except ValueError:
                     runnable = False
                     if not deviating_reason:
@@ -186,4 +224,5 @@ def parse_retrosh(path: Path | str) -> RunConfig:
         deviating_reason=deviating_reason,
         retrosh_path=path,
         machine=model,
+        events=events,
     )

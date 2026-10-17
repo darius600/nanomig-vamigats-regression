@@ -2,8 +2,9 @@
 /roms/
 *.rom
 
-# Build output
+# Build output (build/, build-inputs/, harness builds of other NanoMig checkouts)
 /build/
+/build-*/
 /obj_dir/
 *.o
 *.a

@@ -1,6 +1,9 @@
 #!/bin/bash
 # Builds the NanoMig regression harness against external/NanoMig.
 # Tang Nano 20k profile: fx68k unpatched with --no-assert, defines INFER_DPRAM DISABLE_ROM_LOADER.
+# HARNESS_INPUTS=1 builds the input harness (default dir build-inputs) for the tests that
+# use joystick, mouse or keyboard: same sources, but a copy of sim/nanomig_tb.v whose
+# input ports the harness drives (harness/inputs_tb.py).
 set -e
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -12,6 +15,8 @@ if [ -n "$1" ]; then
     BUILD_DIR=$(realpath "$1")
 elif [ "$PWD" != "$SCRIPT_DIR" ] && [ "$PWD" != "$REPO_ROOT" ]; then
     BUILD_DIR="$PWD"
+elif [ -n "$HARNESS_INPUTS" ]; then
+    BUILD_DIR="$REPO_ROOT/build-inputs"
 else
     BUILD_DIR="$REPO_ROOT/build"
 fi
@@ -40,7 +45,15 @@ MINIMIG="$NANOMIG_DIR/src/nanomig.v $M/amiga_clk.v $M/cpu_wrapper.v $M/cpu_cache
  $NANOMIG_DIR/src/minimig/Amber.v $M/userio.v"
 FX="$NANOMIG_DIR/src/fx68k/fx68k.sv $NANOMIG_DIR/src/fx68k/fx68kAlu.sv $NANOMIG_DIR/src/fx68k/uaddrPla.sv"
 MISC="$NANOMIG_DIR/src/misc/sd_card.v $NANOMIG_DIR/src/misc/sd_rw.v $NANOMIG_DIR/src/misc/sdcmd_ctrl.v $NANOMIG_DIR/src/misc/sdram.sv"
-HDL="$NANOMIG_DIR/sim/nanomig_tb.v $NANOMIG_DIR/sim/sdr_chip_model.v $MINIMIG $FX $MISC $NANOMIG_DIR/sim/TG68KdotC_Kernel.v"
+TB="$NANOMIG_DIR/sim/nanomig_tb.v"
+CDEFINES=""
+if [ -n "$HARNESS_INPUTS" ]; then
+    TB="$BUILD_DIR/tb/nanomig_tb.v"
+    python3 "$SCRIPT_DIR/inputs_tb.py" "$NANOMIG_DIR/sim/nanomig_tb.v" "$TB"
+    CDEFINES="-DHARNESS_INPUTS"
+    echo "  Testbench:    copy with harness-driven inputs ($TB)"
+fi
+HDL="$TB $NANOMIG_DIR/sim/sdr_chip_model.v $MINIMIG $FX $MISC $NANOMIG_DIR/sim/TG68KdotC_Kernel.v"
 
 VLT="$SCRIPT_DIR/taps.vlt"
 
@@ -48,7 +61,7 @@ verilator -O3 $DEFINES -Wno-fatal -Wno-BLKANDNBLK -Wno-lint -Wno-style --no-timi
   -I"$NANOMIG_DIR"/sim -I"$NANOMIG_DIR"/src/fx68k \
   -top-module nanomig_tb -cc $HDL "$VLT" \
   --exe "$SCRIPT_DIR/harness.cpp" "$NANOMIG_DIR"/sim/sd_card.cpp \
-  -o ../nanomig_harness -CFLAGS "-I$NANOMIG_DIR/sim $DEFINES -O2" \
+  -o ../nanomig_harness -CFLAGS "-I$NANOMIG_DIR/sim $DEFINES $CDEFINES ${HARNESS_OPT:--O2}" \
   --Mdir "$BUILD_DIR/obj_dir" > "$BUILD_DIR/verilator.log" 2>&1 || { tail -30 "$BUILD_DIR/verilator.log"; exit 1; }
 
 JOBS=$(nproc 2>/dev/null || echo 4)

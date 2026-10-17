@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 
 from loader.publish import (
+    check_publishable,
     compute_agreement,
     generate_group_markdown,
     generate_test_report_markdown,
@@ -41,6 +42,16 @@ class TestPublish(unittest.TestCase):
             verdicts["Agnus/Blitter/bbusy/bbusy3"],
             ("❌ Different", "Note: with | pipe in comment"),
         )
+
+    def test_only_single_runs_are_published(self):
+        single = (Path("a/result.json"), {"class": "PASS", "nanomig_sha": "0f3d2fd"})
+        forked = (Path("b/result.json"), {"class": "PASS", "nanomig_sha": "0f3d2fd", "zygote_fork_at_s": 3.5})
+        dirty = (Path("c/result.json"), {"class": "FAIL", "nanomig_sha": "0f3d2fd-dirty"})
+        check_publishable([single])
+        with self.assertRaisesRegex(RuntimeError, "zygote"):
+            check_publishable([single, forked])
+        with self.assertRaisesRegex(RuntimeError, "uncommitted"):
+            check_publishable([single, dirty])
 
     def test_compute_agreement(self):
         manual_verdicts = {
