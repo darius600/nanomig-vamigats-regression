@@ -3,11 +3,15 @@
 // the Agnus beam counter and one VGA-captured frame.
 //
 // Usage:
-//   nanomig_harness <kick.rom> <disk.adf> <wait_s> <out.frame> [ocs|ecs]
+//   nanomig_harness <kick.rom> <disk.adf> <wait_s> <out.frame> [--chipset 0xNN] [--memory 0xNN]
+//   --chipset and --memory go to nanomig_tb's chipset_config and memory_config inputs
+//   (loader/retrosh.py maps each vAmigaTS machine onto them).
 //
 // Output files:
-//   <out.frame>:     FRAME_H x FRAME_W x 4 bytes {r, g, b, flags}
-//   <out.frame>.vga: VGA-captured frame (width, height header + RGB payload)
+//   <out.frame>.vga: VGA-captured frame (width, height header + RGB payload); the
+//                    comparison uses only this one (loader/capture.py)
+//   <out.frame>:     FRAME_H x FRAME_W x 4 bytes {r, g, b, flags}, indexed by the beam
+//                    counter; kept for diagnosis only
 
 #include <cstdio>
 #include <cstdlib>

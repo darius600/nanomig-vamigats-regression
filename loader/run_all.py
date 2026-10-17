@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from loader.retrosh import parse_retrosh
-from loader.run_test import BUILD_PROFILE, get_git_sha, run_test
+from loader.run_test import BUILD_PROFILE, get_git_revision, get_git_sha, run_test
 from loader.report import write_reports
 
 VAMIGATS_ROOT = REPO_ROOT / "external" / "vAmigaTS"
@@ -113,7 +113,8 @@ def main() -> None:
         "--nanomig-dir",
         default=None,
         help="NanoMig checkout the harness was built from (default: external/NanoMig); "
-             "its HEAD SHA is recorded in every result and used for resume.",
+             "its HEAD SHA is recorded in every result and used for resume. With "
+             "uncommitted changes it is recorded as <sha>-dirty and never resumed.",
     )
     parser.add_argument(
         "--no-lock",
@@ -127,8 +128,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     nanomig_dir = Path(args.nanomig_dir).resolve() if args.nanomig_dir else REPO_ROOT / "external" / "NanoMig"
-    nanomig_sha = get_git_sha(nanomig_dir)
+    nanomig_sha = get_git_revision(nanomig_dir)
     vamigats_sha = get_git_sha(VAMIGATS_ROOT)
+    regression_sha = get_git_revision(REPO_ROOT)
+    nanomig_dirty = nanomig_sha.endswith("-dirty")
+    if nanomig_dirty:
+        print(f"Warning: {nanomig_dir} has uncommitted changes. Results are recorded as "
+              f"{nanomig_sha} and every variant is simulated again; commit the change "
+              f"to make a run resumable.", file=sys.stderr)
 
     retrosh_files = collect_retrosh_files(args.subtrees)
     if not retrosh_files:
@@ -169,7 +176,7 @@ def main() -> None:
 
         # Check resume condition
         can_resume = False
-        if not args.force and result_json_path.is_file():
+        if not args.force and not nanomig_dirty and result_json_path.is_file():
             try:
                 cached = json.loads(result_json_path.read_text(encoding="utf-8"))
                 if (
@@ -194,6 +201,7 @@ def main() -> None:
                 out_dir=variant_out,
                 nanomig_sha=nanomig_sha,
                 vamigats_sha=vamigats_sha,
+                regression_sha=regression_sha,
             )
             print(f"[{res['class']}] {config.variant}: {res.get('detail', '')}")
             results_map[str(rf)] = res
@@ -217,6 +225,7 @@ def main() -> None:
                         harness_path=args.harness,
                         nanomig_sha=nanomig_sha,
                         vamigats_sha=vamigats_sha,
+                        regression_sha=regression_sha,
                     ): (rf, var_out, cfg)
                     for (rf, var_out, cfg) in to_simulate
                 }
@@ -236,6 +245,7 @@ def main() -> None:
                             "labels": cfg.labels,
                             "nanomig_sha": nanomig_sha,
                             "vamigats_sha": vamigats_sha,
+                            "regression_sha": regression_sha,
                             "build_profile": BUILD_PROFILE,
                             "retrosh_path": str(rf.relative_to(VAMIGATS_ROOT).as_posix()),
                             "harness_args": None,

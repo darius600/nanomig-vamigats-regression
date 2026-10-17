@@ -60,17 +60,21 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     result = capture.parent / "result.json"
     if result.is_file():
         # names like timing1 exist in several groups - use the run's own path
-        retrosh = VAMIGATS / json.loads(result.read_text())["retrosh_path"]
+        data = json.loads(result.read_text())
+        retrosh = VAMIGATS / data["retrosh_path"]
+        # the variant is the script's screenshot name, which can differ from the
+        # script's file name (timing11l3.retrosh saves timing13l3)
+        variant = data.get("variant") or retrosh.stem
     else:
         hits = list(VAMIGATS.rglob(f"{variant}.retrosh"))
         if len(hits) != 1:
             return f"{variant}: {len(hits)} .retrosh files found, skipped"
         retrosh = hits[0]
-    variant = retrosh.stem
+        variant = retrosh.stem
     if not retrosh.with_suffix(".raw").is_file():
         return f"{variant}: no reference .raw in vAmigaTS, skipped"
     ref = np.fromfile(retrosh.with_suffix(".raw"), np.uint8).reshape(H, W, 3)
-    stem = image_stem(out_dir, retrosh)
+    stem = image_stem(out_dir, retrosh, variant)
     raster = read_vga(capture)
     geom = (raster.shape[1], raster.shape[0])
     if geom not in CROP_TABLE:
@@ -104,17 +108,19 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     return f"{stem}: new {new_verdict}, old {old_verdict}, new vs old {change}"
 
 
-def image_stem(out_dir, retrosh):
-    """A file name in out_dir that no other test has taken in this process.
+def image_stem(out_dir, retrosh, name=None):
+    """A file name in out_dir, based on name (default: the script's file name),
+    that no other test has taken in this process.
 
     Two tests may share a variant name (overscan2) or differ only in case
     (CPU/IPL/.../MOVE1b_68000, CPU/Timing/.../MOVE1B_68000), which NTFS treats
     as the same file. The later one gets the directories above its test
     directory in the name, as many as it takes to be unique.
     """
+    base = name or retrosh.stem
     above = retrosh.relative_to(VAMIGATS).parent.parent.parts
     for n in range(len(above) + 1):
-        stem = retrosh.stem if n == 0 else f"{retrosh.stem}__{'_'.join(above[-n:])}"
+        stem = base if n == 0 else f"{base}__{'_'.join(above[-n:])}"
         if _written.setdefault((out_dir.resolve(), stem.lower()), retrosh) == retrosh:
             return stem
     raise ValueError(f"no unique image name for {retrosh}")

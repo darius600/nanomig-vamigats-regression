@@ -26,7 +26,16 @@ def load_color_table(
     table_path: Optional[Path | str] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Loads the 12-bit -> RGB lookup table.
-    
+
+    color_table.json holds, for each of the 751 Amiga colours (4 bits per
+    channel) that occur in the vAmigaTS references at the pinned commit, the RGB
+    bytes vAmiga wrote for it. It was collected from the references themselves;
+    tests/test_selftests.py checks that every colour has exactly one RGB value
+    (the checkerboard greys aside) and that every PAL reference is rebuilt from
+    its own 4-bit image byte for
+    byte. A colour missing from the table is reported as raw_status
+    "missing colours" (the frame is still compared at 4 bits).
+
     Returns (lut, known):
       lut: shape (16, 16, 16, 3) uint8 RGB
       known: shape (16, 16, 16) bool

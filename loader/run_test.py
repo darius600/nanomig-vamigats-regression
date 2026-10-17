@@ -54,6 +54,27 @@ def get_git_sha(repo_dir: Path) -> str:
         return "unknown"
 
 
+def get_git_revision(repo_dir: Path) -> str:
+    """HEAD SHA of repo_dir, with "-dirty" appended when tracked files have
+    uncommitted changes (submodules ignored).
+
+    A dirty SHA does not say which code produced a result, so run_all never
+    resumes such a result: commit a change before relying on a run of it.
+    """
+    sha = get_git_sha(repo_dir)
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(repo_dir), "status", "--porcelain",
+             "--untracked-files=no", "--ignore-submodules=all"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return sha
+    return f"{sha}-dirty" if res.stdout.strip() else sha
+
+
 def run_test(
     retrosh_path: Path | str,
     out_dir: Path | str | None = None,
@@ -61,6 +82,7 @@ def run_test(
     rom_path: Path | str | None = None,
     nanomig_sha: Optional[str] = None,
     vamigats_sha: Optional[str] = None,
+    regression_sha: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Executes a single test script end-to-end and writes result.json.
     
@@ -94,9 +116,11 @@ def run_test(
         rel_retrosh = str(retrosh_path.as_posix())
 
     if nanomig_sha is None:
-        nanomig_sha = get_git_sha(REPO_ROOT / "external" / "NanoMig")
+        nanomig_sha = get_git_revision(REPO_ROOT / "external" / "NanoMig")
     if vamigats_sha is None:
         vamigats_sha = get_git_sha(vamigats_root)
+    if regression_sha is None:
+        regression_sha = get_git_revision(REPO_ROOT)
 
     result: Dict[str, Any] = {
         "variant": config.variant,
@@ -105,6 +129,7 @@ def run_test(
         "labels": config.labels,
         "nanomig_sha": nanomig_sha,
         "vamigats_sha": vamigats_sha,
+        "regression_sha": regression_sha,
         "build_profile": BUILD_PROFILE,
         "retrosh_path": rel_retrosh,
         "harness_args": None,
@@ -143,14 +168,10 @@ def run_test(
 
     kick_rom = Path(rom_path) if rom_path else (REPO_ROOT / "roms" / "kick13.rom")
     if not kick_rom.is_file():
-        alt_rom = REPO_ROOT / "NanoMig" / "sim" / "kick13.rom"
-        if alt_rom.is_file():
-            kick_rom = alt_rom
-        else:
-            result["detail"] = f"Kickstart ROM not found at {kick_rom}"
-            result["end_time"] = datetime.now().astimezone().isoformat()
-            (out_path / "result.json").write_text(json.dumps(result, indent=2))
-            return result
+        result["detail"] = f"Kickstart ROM not found at {kick_rom}"
+        result["end_time"] = datetime.now().astimezone().isoformat()
+        (out_path / "result.json").write_text(json.dumps(result, indent=2))
+        return result
 
     if not config.adf or not config.adf.is_file():
         result["detail"] = f"ADF disk image not found for {retrosh_path}"
@@ -158,11 +179,10 @@ def run_test(
         (out_path / "result.json").write_text(json.dumps(result, indent=2))
         return result
 
-    # Expected wall time ~ 100x simulation time; timeout = 3x expected wall time
-    # A hung simulator keeps burning CPU, while an overloaded machine only stretches
-    # the wall time. So the limit is CPU time (3x the expected ~100x simulated time);
-    # the wall-clock timeout is only a backstop for a process that hangs without
-    # using the CPU.
+    # The simulation runs about 100x slower than real time. A hung simulator keeps
+    # burning CPU, while an overloaded machine only stretches the wall time. So the
+    # limit is CPU time (3x the expected ~100x simulated time); the wall-clock
+    # timeout (10x) is only a backstop for a process that hangs without using the CPU.
     expected_cpu = config.wait_s * 100.0
     cpu_limit_s = int(max(60.0, 3.0 * expected_cpu))
     timeout_s = max(600.0, 10.0 * expected_cpu)

@@ -26,12 +26,13 @@ class RunConfig:
     runnable: bool = True
     deviating_reason: Optional[str] = None
     retrosh_path: Optional[Path] = None
+    machine: Optional[str] = None   # vAmiga's machine, e.g. A500_OCS_1MB
 
 
 # The .raw references are vAmiga screenshots; the vAmigaTS hardware photos of these
-# tests show something else (see docs/REFERENCES.md): a
-# real A500 with ECS Agnus does not draw the clean image vAmiga drew. A FAIL here
-# says nothing about real hardware. The label never changes PASS/FAIL.
+# tests show something else (see docs/REFERENCES.md): a real A500 with ECS Agnus
+# does not draw the clean image vAmiga drew. A FAIL here says nothing about real
+# hardware. The label never changes PASS/FAIL.
 REFERENCE_CONTRADICTS_PHOTO = (
     "Agnus/DIW/DIWV/diwv9/diwv9_ecs.retrosh",
     "Agnus/DIW/DIWV/diwv12/diwv12_ecs.retrosh",
@@ -42,9 +43,10 @@ REFERENCE_CONTRADICTS_PHOTO = (
 
 def parse_retrosh(path: Path | str) -> RunConfig:
     """Parses a .retrosh file into a RunConfig.
-    
-    Unsupported features or deviating configs set runnable=False with
-    deviating_reason populated.
+
+    Every command the script uses must map onto NanoMig's configuration inputs;
+    anything else (a 68010, input devices, more drives, an unknown command) sets
+    runnable=False with deviating_reason, and the variant is DEVIATING_CONFIG.
     """
     path = Path(path).resolve()
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -183,4 +185,5 @@ def parse_retrosh(path: Path | str) -> RunConfig:
         runnable=runnable,
         deviating_reason=deviating_reason,
         retrosh_path=path,
+        machine=model,
     )

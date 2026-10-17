@@ -4,7 +4,15 @@ from pathlib import Path
 from typing import Tuple
 import numpy as np
 
-# Calibrated crop entries: raster geometry -> (x, y) of the dump area
+# Where vAmiga's 716 x 285 dump area lies in NanoMig's scan-doubled VGA frame:
+# raster geometry (width, height) -> (x, y) of its top left corner. The offset was
+# found by searching for the position at which the captures of four OCS tests
+# (Agnus/Copper/cross/cross1, Agnus/Copper/Wait/copwait4, Agnus/DDF/DDF/oldhwstop1,
+# Agnus/DIW/DIWV/diwv1) match their references pixel for pixel; a periodic picture
+# alone is not enough, cross1 also matches 8 colour clocks off. 908 x 626 is a PAL
+# long frame, 908 x 624 a short frame (tests that clear LOF, e.g.
+# Agnus/Registers/VPOS/lof2), which starts one VGA line lower. Every other geometry
+# (NTSC, interlace) is NOT_CALIBRATED until it has been checked the same way.
 CROP_TABLE = {
     (908, 626): (78, 42),
     (908, 624): (78, 43),

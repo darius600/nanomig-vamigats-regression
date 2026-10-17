@@ -32,6 +32,11 @@ class TestImageStem(unittest.TestCase):
         self.assertEqual(image_stem(self.out, ipl), "ANDCCR_68000")
         self.assertEqual(image_stem(self.out, timing2), "ANDCCR_68000__Timing2_AND")
 
+    def test_named_after_the_variant(self):
+        """timing11l3.retrosh saves its screenshot as timing13l3; the image carries that name."""
+        r = VAMIGATS / "Agnus/Blitter/timing/timing11l3/timing11l3.retrosh"
+        self.assertEqual(image_stem(self.out, r, "timing13l3"), "timing13l3")
+
     def test_other_out_dir_is_independent(self):
         ipl = VAMIGATS / "CPU/IPL/MOVE1/MOVE1b/MOVE1b_68000.retrosh"
         timing = VAMIGATS / "CPU/Timing/MOVE1/MOVE1B/MOVE1B_68000.retrosh"

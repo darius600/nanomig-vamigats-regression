@@ -91,22 +91,25 @@ class TestPublish(unittest.TestCase):
     def test_generate_group_markdown(self):
         results = [
             {
+                "variant": "cop3_nc",
+                "class": "NOT_CALIBRATED",
+                "geometry": "908x524",
+                "machine": "A500_ECS_1MB",
+                "retrosh_path": "Agnus/Copper/cop3/cop3_nc.retrosh",
+            },
+            {
                 "variant": "cop1_pass",
                 "class": "PASS",
                 "differing_pixels": 0,
+                "machine": "A500_OCS_1MB",
                 "retrosh_path": "Agnus/Copper/cop1/cop1_pass.retrosh",
             },
             {
                 "variant": "cop2_fail",
                 "class": "FAIL",
                 "differing_pixels": 42,
+                "machine": "A500_ECS_1MB",
                 "retrosh_path": "Agnus/Copper/cop2/cop2_fail.retrosh",
-            },
-            {
-                "variant": "cop3_nc",
-                "class": "NOT_CALIBRATED",
-                "geometry": "908x524",
-                "retrosh_path": "Agnus/Copper/cop3/cop3_nc.retrosh",
             },
         ]
         manual_verdicts = {
@@ -126,36 +129,57 @@ class TestPublish(unittest.TestCase):
         self.assertTrue(lines[0].startswith("# Agnus_Copper"))
         self.assertIn("0f3d2fd", md)
         self.assertIn("e807e32", md)
-        self.assertIn("Total:** 3", md)
-        self.assertIn("PASS:** 1", md)
-        self.assertIn("FAIL:** 1", md)
-        self.assertIn("NOT_CALIBRATED:** 1", md)
+        self.assertIn("**Compared:** 2 (PASS 1, FAIL 1) | **ERROR:** 0 | **Not compared:** 1", md)
+        self.assertIn("NOT_CALIBRATED 1, NO_REFERENCE 0; listed at the end", md)
 
-        # Table rows
-        self.assertIn(
-            "| Agnus/Copper/cop1 | cop1_pass | PASS | 0 |  | ✅ Identical | matches | [cop1_pass.png](Agnus/Copper/cop1/cop1_pass.png) |",
-            md,
+        # Compared rows first, the not compared ones in their own table at the end
+        pass_row = ("| Agnus/Copper/cop1 | cop1_pass | A500 OCS | PASS | 0 |  | ✅ Identical | matches "
+                    "| [cop1_pass.png](Agnus/Copper/cop1/cop1_pass.png) |")
+        fail_row = ("| Agnus/Copper/cop2 | cop2_fail | A500 ECS | FAIL | 42 |  | ❌ Different | broken copper "
+                    "| [cop2_fail.png](Agnus/Copper/cop2/cop2_fail.png) |")
+        nc_row = "| Agnus/Copper/cop3 | cop3_nc | A500 ECS | NOT_CALIBRATED | raster 908x524 not calibrated |"
+        for row in (pass_row, fail_row, nc_row):
+            self.assertIn(row, md)
+        self.assertLess(md.index(fail_row), md.index("## Not compared"))
+        self.assertLess(md.index("## Not compared"), md.index(nc_row))
+
+    def test_group_without_compared_variants(self):
+        md = generate_group_markdown(
+            group="CPU/68010",
+            results=[{"variant": "colorloop_68010", "class": "DEVIATING_CONFIG", "detail": "cpu 68010",
+                      "retrosh_path": "CPU/68010/Loopmode/colorloop/colorloop_68010.retrosh"}],
+            manual_verdicts={},
+            nanomig_sha="0f3d2fd",
+            vamigats_sha="e807e32",
         )
-        self.assertIn(
-            "| Agnus/Copper/cop2 | cop2_fail | FAIL | 42 |  | ❌ Different | broken copper | [cop2_fail.png](Agnus/Copper/cop2/cop2_fail.png) |",
-            md,
-        )
-        self.assertIn(
-            "| Agnus/Copper/cop3 | cop3_nc | NOT_CALIBRATED | 908x524 |  |  |  | — |",
-            md,
-        )
+        self.assertIn("No variant of this group was compared.", md)
+        self.assertIn("| CPU/68010/Loopmode/colorloop | colorloop_68010 |  | DEVIATING_CONFIG | cpu 68010 |", md)
 
     def test_generate_test_report_markdown(self):
         results = [
             {
                 "variant": "cop1",
                 "class": "PASS",
+                "raw_status": "byte-identical",
                 "retrosh_path": "Agnus/Copper/cop1/cop1.retrosh",
             },
             {
                 "variant": "blit1",
                 "class": "FAIL",
+                "differing_pixels": 4,
+                "machine": "A500_OCS_1MB",
                 "retrosh_path": "Agnus/Blitter/blit1/blit1.retrosh",
+            },
+            {
+                "variant": "blit2",
+                "class": "FAIL",
+                "differing_pixels": 4000,
+                "retrosh_path": "Agnus/Blitter/blit2/blit2.retrosh",
+            },
+            {
+                "variant": "loop1",
+                "class": "DEVIATING_CONFIG",
+                "retrosh_path": "CPU/68010/loop1/loop1.retrosh",
             },
         ]
         agreements = {
@@ -183,15 +207,32 @@ class TestPublish(unittest.TestCase):
             regression_sha="1bb9f32",
             build_profile="Tang Nano 20k, fx68k",
             date_str="2026-10-12",
+            synccpu_fails=1,
         )
 
         self.assertIn("https://github.com/harbaum/NanoMig/commit/0f3d2fd", md)
         self.assertIn("https://github.com/dirkwhoffmann/vAmigaTS/commit/e807e32", md)
-        self.assertIn("1bb9f32", md)
+        self.assertIn("nanomig-vamigats-regression/commit/1bb9f32", md)
         self.assertIn("Tang Nano 20k, fx68k", md)
         self.assertIn("[Agnus/Blitter](Agnus_Blitter.md)", md)
         self.assertIn("[Agnus/Copper](Agnus_Copper.md)", md)
         self.assertIn("How to read", md)
+
+        # Where to start: the compared count and the closest FAIL, before the summary
+        self.assertIn("**3 variants compared: 1 identical to the reference (PASS), 2 different (FAIL).** "
+                      "The other 1 were not compared", md)
+        near_row = "| Agnus/Blitter/blit1 | blit1 | A500 OCS | 4 | [blit1.png](Agnus/Blitter/blit1/blit1.png) |"
+        self.assertLess(md.index(near_row), md.index("## Summary"))
+        self.assertNotIn("| Agnus/Blitter/blit2 | blit2 |", md)
+        self.assertIn("1 of the 2 FAILs come from tests whose source calls", md)
+        self.assertIn("In all 1 PASS the `.raw` rebuilt", md)
+
+        # Group rows add up: every class has its column
+        self.assertIn("| [CPU/68010](CPU_68010.md) | 1 | 0 | 0 | 1 | 0 | 0 | 0 |", md)
+        # Agreement is per test directory and leaves out groups without hand verdicts
+        self.assertIn("| [Agnus/Copper](Agnus_Copper.md) | 1 | 0 | 0 | 0 |", md)
+        agreement = md[md.index("## Agreement"):md.index("## How to read")]
+        self.assertNotIn("CPU/68010", agreement)
 
 
 if __name__ == "__main__":

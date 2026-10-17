@@ -1,4 +1,5 @@
-"""Selftests of the comparison."""
+"""Selftests of the comparison: every reference against itself, the checkerboard
+outside the cutout, single-pixel mutations, the colour table and the script parser."""
 
 import json
 from pathlib import Path
