@@ -216,13 +216,14 @@ def generate_group_markdown(
             "",
             "## Not compared",
             "",
-            "| Test | Variant | Machine | Result | Reason |",
-            "|---|---|---|---|---|",
+            "| Test | Variant | Machine | Result | Reason | Labels |",
+            "|---|---|---|---|---|---|",
         ]
         for r in sorted_by_test(skipped):
+            labels = ", ".join(f"`{label}`" for label in r.get("labels", []))
             lines.append(
                 f"| {test_dir_of(r)} | {r.get('variant', '')} | {machine_of(r)} | {r.get('class')} "
-                f"| {not_compared_reason(r)} |"
+                f"| {not_compared_reason(r)} | {labels} |"
             )
 
     lines.append("")

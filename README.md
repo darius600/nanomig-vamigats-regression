@@ -135,7 +135,10 @@ commit means a new run, also in the same `--out`.
 
 `python3 -m loader.publish <run> ../nanomig-vamigats-results` writes a run into
 a working copy of the results repository (no commit, no push); it is how the
-published results are made.
+published results are made. Some variants differ from their script's name only
+in case (`vblank1_ecs.retrosh` saves `vblank1_ECS`); on a case-insensitive file
+system (Windows, macOS) stage with `git rm -r -q --cached . && git add -A`, so
+such renames reach git.
 
 ## Another Minimig-derived core
 

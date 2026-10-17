@@ -137,7 +137,7 @@ class TestPublish(unittest.TestCase):
                     "| [cop1_pass.png](Agnus/Copper/cop1/cop1_pass.png) |")
         fail_row = ("| Agnus/Copper/cop2 | cop2_fail | A500 ECS | FAIL | 42 |  | ❌ Different | broken copper "
                     "| [cop2_fail.png](Agnus/Copper/cop2/cop2_fail.png) |")
-        nc_row = "| Agnus/Copper/cop3 | cop3_nc | A500 ECS | NOT_CALIBRATED | raster 908x524 not calibrated |"
+        nc_row = "| Agnus/Copper/cop3 | cop3_nc | A500 ECS | NOT_CALIBRATED | raster 908x524 not calibrated |  |"
         for row in (pass_row, fail_row, nc_row):
             self.assertIn(row, md)
         self.assertLess(md.index(fail_row), md.index("## Not compared"))
@@ -153,7 +153,7 @@ class TestPublish(unittest.TestCase):
             vamigats_sha="e807e32",
         )
         self.assertIn("No variant of this group was compared.", md)
-        self.assertIn("| CPU/68010/Loopmode/colorloop | colorloop_68010 |  | DEVIATING_CONFIG | cpu 68010 |", md)
+        self.assertIn("| CPU/68010/Loopmode/colorloop | colorloop_68010 |  | DEVIATING_CONFIG | cpu 68010 |  |", md)
 
     def test_generate_test_report_markdown(self):
         results = [
