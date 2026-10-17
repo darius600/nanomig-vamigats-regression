@@ -24,7 +24,7 @@ from loader.capture import CROP_TABLE
 ROOT = Path(__file__).resolve().parent.parent
 VAMIGATS = ROOT / "external" / "vAmigaTS"
 H, W, X0, Y0 = 285, 716, 196, 26
-_written = {}   # (out_dir, variant) -> .retrosh rendered under that name in this process
+_written = {}   # (out_dir, lower-case stem) -> .retrosh rendered under that stem in this process
 LABEL_H, GAP = 24, 8
 
 
@@ -70,12 +70,7 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     if not retrosh.with_suffix(".raw").is_file():
         return f"{variant}: no reference .raw in vAmigaTS, skipped"
     ref = np.fromfile(retrosh.with_suffix(".raw"), np.uint8).reshape(H, W, 3)
-    # two tests may share a variant name (overscan2); the second one gets its directory in the name
-    stem = variant
-    key = (out_dir.resolve(), variant)
-    if key in _written and _written[key] != retrosh:
-        stem = f"{variant}__{retrosh.parent.parent.name}"
-    _written.setdefault(key, retrosh)
+    stem = image_stem(out_dir, retrosh)
     raster = read_vga(capture)
     geom = (raster.shape[1], raster.shape[0])
     if geom not in CROP_TABLE:
@@ -107,6 +102,22 @@ def render(capture, out_dir, old_dir=None, save_original=False):
     img = np.vstack([row1, np.full((GAP, row1.shape[1], 3), 64, np.uint8), row2])
     cv2.imwrite(str(out_dir / f"{stem}.png"), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     return f"{stem}: new {new_verdict}, old {old_verdict}, new vs old {change}"
+
+
+def image_stem(out_dir, retrosh):
+    """A file name in out_dir that no other test has taken in this process.
+
+    Two tests may share a variant name (overscan2) or differ only in case
+    (CPU/IPL/.../MOVE1b_68000, CPU/Timing/.../MOVE1B_68000), which NTFS treats
+    as the same file. The later one gets the directories above its test
+    directory in the name, as many as it takes to be unique.
+    """
+    above = retrosh.relative_to(VAMIGATS).parent.parent.parts
+    for n in range(len(above) + 1):
+        stem = retrosh.stem if n == 0 else f"{retrosh.stem}__{'_'.join(above[-n:])}"
+        if _written.setdefault((out_dir.resolve(), stem.lower()), retrosh) == retrosh:
+            return stem
+    raise ValueError(f"no unique image name for {retrosh}")
 
 
 def differences(img, ref, area, title):
