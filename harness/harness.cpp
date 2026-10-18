@@ -91,6 +91,7 @@ static uint16_t *p_hpos, *p_vpos;
 
 static double wait_s;
 static const char *out_path;
+static bool zygote_child = false;   // set in a child forked by --zygote
 static long frames = 0;
 
 // VGA capture: scandoubled output captured the way the testbench does
@@ -146,6 +147,11 @@ static void capture() {
       fclose(f);
       dump_vga();
       printf("%.3fms dumped frame %ld (%d lines) to %s, vga %dx%d\n", simulation_time * 1000, frames, last_v + 1, out_path, last_vga_w, last_vga_h);
+      if (zygote_child) {
+        // exit() would run the cleanup inherited from the zygote and wait there forever
+        fflush(stdout);
+        _exit(0);
+      }
       exit(0);
     }
     std::fill(frame.begin(), frame.end(), 0);
@@ -295,6 +301,7 @@ static void run_zygote() {
         alarm((unsigned)j.wall_limit);
         wait_s = j.wait;
         out_path = strdup(j.out.c_str());
+        zygote_child = true;
         printf("%.3fms zygote child: %s, wait %.1fs\n", simulation_time * 1000, j.adf.c_str(), j.wait);
         return;
       }
