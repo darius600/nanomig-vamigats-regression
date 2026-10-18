@@ -67,7 +67,7 @@ sources touch one of them carry the label.
 
 | | |
 |---|---|
-| NanoMig | `external/NanoMig` at `0f3d2fd` (harbaum/NanoMig `main`, 2026-10-09) |
+| NanoMig | `external/NanoMig` at `4315acb` (MiSTle-Dev/NanoMig `main`, 2026-10-16; `ENABLE_AT_MODEM` left undefined, see Limitations) |
 | vAmigaTS | `external/vAmigaTS` at `e807e32` |
 | Verilator | 5.052 |
 
@@ -196,3 +196,8 @@ vAmigaTS.
   through the FPGA companion's protocol.
 - A `FAIL` says that NanoMig's frame differs from the reference. It does not
   say why. The side-by-side images show where.
+- `ENABLE_AT_MODEM`, which NanoMig's Tang Nano 20k profile sets, stays
+  undefined: it routes Paula's UART through a 16-byte FIFO to the FPGA
+  companion, which the simulation does not have, so a UART test sending more
+  than 16 bytes would stall. NanoMig's own `sim/Makefile` leaves it undefined
+  too.
