@@ -376,8 +376,8 @@ def generate_test_report_markdown(
         f"the cutout. {raw_sentence}".rstrip(),
         "- **FAIL:** Differences were found inside the compared area (cutout). The group pages give the number "
         "of differing pixels and link the image.",
-        "- **DEVIATING_CONFIG:** The script asks for something NanoMig on a Tang Nano 20k cannot be configured "
-        "to: a 68010, further floppy drives. Not simulated; the reason is on the group page.",
+        "- **DEVIATING_CONFIG:** The script asks for something this run could not set NanoMig on a Tang Nano 20k "
+        "up for, e.g. a 68010. Not simulated; the reason is on the group page.",
         "- **NOT_CALIBRATED:** Simulated, but the raster has no verified crop yet, so it is not compared.",
         "- **NTSC** frames are compared on the 237 rows an NTSC beam reaches; the `_ocs` NTSC references are "
         "black there, so their PASS says little.",
