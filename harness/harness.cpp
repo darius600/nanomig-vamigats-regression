@@ -12,18 +12,6 @@
 //   the joystick or mouse button bits to value; kind key sends value as one keyboard
 //   byte (keycode, bit 7 set for a release).
 //
-// Zygote mode, to boot Kickstart once for many tests of one configuration:
-//   nanomig_harness --zygote <jobfile> --children N <kick.rom> <placeholder.adf> <fork_at_s> -
-//                   [--chipset 0xNN] [--memory 0xNN]
-//   Boots with the placeholder image until fork_at_s, checks that the image has not been
-//   read yet, then forks one child per line of jobfile ("<adf>\t<wait_s>\t<out.frame>
-//   \t<cpu_limit_s>\t<wall_limit_s>"), at most N at a time. Each child puts its ADF
-//   behind the descriptor the SD card model opened and simulates on, exactly as a run
-//   started with that ADF: nothing in the simulation depends on the image's contents
-//   before it is first read (all vAmigaTS ADFs have the same size). The child's output
-//   goes to <out.frame>.log; the parent prints "done <job> <exit> <signal> <cpu_s>
-//   <wall_s>" per child. Exit 3: the image was read before fork_at_s.
-//
 // Output files:
 //   <out.frame>.vga: VGA-captured frame (width, height header + RGB payload); the
 //                    comparison uses only this one (loader/capture.py)
@@ -31,24 +19,13 @@
 //                    counter; kept for diagnosis only
 
 #include <algorithm>
-#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <ctime>
-#include <fstream>
-#include <map>
-#include <sstream>
 #include <string>
 #include <vector>
-
-#include <dirent.h>
-#include <fcntl.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include "Vnanomig_tb.h"
 #include "Vnanomig_tb__Syms.h"
@@ -91,7 +68,6 @@ static uint16_t *p_hpos, *p_vpos;
 
 static double wait_s;
 static const char *out_path;
-static bool zygote_child = false;   // set in a child forked by --zygote
 static long frames = 0;
 
 // VGA capture: scandoubled output captured the way the testbench does
@@ -147,11 +123,6 @@ static void capture() {
       fclose(f);
       dump_vga();
       printf("%.3fms dumped frame %ld (%d lines) to %s, vga %dx%d\n", simulation_time * 1000, frames, last_v + 1, out_path, last_vga_w, last_vga_h);
-      if (zygote_child) {
-        // exit() would run the cleanup inherited from the zygote and wait there forever
-        fflush(stdout);
-        _exit(0);
-      }
       exit(0);
     }
     std::fill(frame.begin(), frame.end(), 0);
@@ -223,108 +194,6 @@ static void tick(int c) {
   simulation_time += TICKLEN;
 }
 
-// ---- zygote mode ----
-static const char *zygote_jobfile = nullptr;
-static int zygote_children = 1;
-static double zygote_fork_at = 0;
-static std::string zygote_placeholder;
-
-struct Job { std::string adf, out; double wait, cpu_limit, wall_limit; };
-
-static double now_s() {
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return t.tv_sec + t.tv_nsec / 1e9;
-}
-
-// The descriptor the SD card model opened for the drive image (the placeholder)
-static int image_fd() {
-  char want[PATH_MAX], link[PATH_MAX], path[64];
-  if (!realpath(zygote_placeholder.c_str(), want)) return -1;
-  DIR *d = opendir("/proc/self/fd");
-  if (!d) return -1;
-  int found = -1;
-  while (struct dirent *e = readdir(d)) {
-    snprintf(path, sizeof path, "/proc/self/fd/%s", e->d_name);
-    ssize_t n = readlink(path, link, sizeof link - 1);
-    if (n <= 0) continue;
-    link[n] = 0;
-    if (!strcmp(link, want)) found = atoi(e->d_name);
-  }
-  closedir(d);
-  return found;
-}
-
-// Returns only in a child, which then simulates its job; the parent exits here.
-static void run_zygote() {
-  int fd = image_fd();
-  if (fd < 0) { fprintf(stderr, "zygote: drive image is not open\n"); exit(2); }
-  if (lseek(fd, 0, SEEK_CUR) != 0) {
-    fprintf(stderr, "zygote: the image was read before %.3fs\n", zygote_fork_at);
-    exit(3);
-  }
-  std::vector<Job> jobs;
-  std::ifstream in(zygote_jobfile);
-  for (std::string line; std::getline(in, line);) {
-    if (line.empty()) continue;
-    std::stringstream s(line);
-    Job j; std::string w, c, wl;
-    std::getline(s, j.adf, '\t'); std::getline(s, w, '\t'); std::getline(s, j.out, '\t');
-    std::getline(s, c, '\t'); std::getline(s, wl, '\t');
-    j.wait = atof(w.c_str()); j.cpu_limit = atof(c.c_str()); j.wall_limit = atof(wl.c_str());
-    jobs.push_back(j);
-  }
-  printf("%.3fms zygote: forking %zu jobs, %d at a time\n", simulation_time * 1000, jobs.size(), zygote_children);
-  fflush(stdout);
-  fflush(stderr);
-
-  std::map<pid_t, std::pair<size_t, double>> running;
-  size_t next = 0;
-  while (next < jobs.size() || !running.empty()) {
-    if (next < jobs.size() && (int)running.size() < zygote_children) {
-      const Job &j = jobs[next];
-      pid_t pid = fork();
-      if (pid < 0) { perror("fork"); exit(2); }
-      if (pid == 0) {
-        struct stat a, b;
-        int nfd = open(j.adf.c_str(), O_RDONLY);
-        if (nfd < 0 || fstat(nfd, &a) || fstat(fd, &b) || a.st_size != b.st_size) {
-          fprintf(stderr, "zygote child: %s missing or not the placeholder's size\n", j.adf.c_str());
-          _exit(4);
-        }
-        dup2(nfd, fd);
-        close(nfd);
-        std::string log = j.out + ".log";
-        if (!freopen(log.c_str(), "w", stdout)) _exit(4);
-        struct rlimit cpu = { (rlim_t)j.cpu_limit, (rlim_t)j.cpu_limit + 10 };
-        setrlimit(RLIMIT_CPU, &cpu);
-        alarm((unsigned)j.wall_limit);
-        wait_s = j.wait;
-        out_path = strdup(j.out.c_str());
-        zygote_child = true;
-        printf("%.3fms zygote child: %s, wait %.1fs\n", simulation_time * 1000, j.adf.c_str(), j.wait);
-        return;
-      }
-      running[pid] = { next, now_s() };
-      next++;
-      continue;
-    }
-    int status;
-    struct rusage ru;
-    pid_t pid = wait4(-1, &status, 0, &ru);
-    if (pid < 0) { perror("wait4"); exit(2); }
-    auto it = running.find(pid);
-    if (it == running.end()) continue;
-    double cpu = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec / 1e6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec / 1e6;
-    printf("done %zu %d %d %.1f %.1f\n", it->second.first,
-           WIFEXITED(status) ? WEXITSTATUS(status) : -1, WIFSIGNALED(status) ? WTERMSIG(status) : 0,
-           cpu, now_s() - it->second.second);
-    fflush(stdout);
-    running.erase(it);
-  }
-  exit(0);
-}
-
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
   std::vector<std::string> pos;
@@ -341,10 +210,6 @@ int main(int argc, char **argv) {
       memory = (uint8_t)std::strtoul(argv[++i], nullptr, 0);
     } else if (arg.rfind("--memory=", 0) == 0) {
       memory = (uint8_t)std::strtoul(arg.c_str() + 9, nullptr, 0);
-    } else if (arg == "--zygote" && i + 1 < argc) {
-      zygote_jobfile = argv[++i];
-    } else if (arg == "--children" && i + 1 < argc) {
-      zygote_children = atoi(argv[++i]);
     } else if (arg == "--event" && i + 1 < argc) {
 #ifdef HARNESS_INPUTS
       std::string spec = argv[++i];
@@ -375,12 +240,6 @@ int main(int argc, char **argv) {
   file_image[0] = adf_file.c_str();
   wait_s = atof(pos[2].c_str());
   out_path = out_file.c_str();
-  if (zygote_jobfile) {
-    // positional wait_s is the fork time; the zygote itself never dumps a frame
-    zygote_placeholder = adf_file;
-    zygote_fork_at = wait_s;
-    wait_s = 1e30;
-  }
 
   tb = new Vnanomig_tb;
   uint32_t *mem = (uint32_t *)sig("TOP.nanomig_tb.sdram_chip", "mem");
@@ -420,14 +279,9 @@ int main(int argc, char **argv) {
   struct timespec t0, t1;
   clock_gettime(CLOCK_MONOTONIC, &t0);
   double next_report = 0.1;
-  bool forked = false;
   while (true) {
     tick(1);
     tick(0);
-    if (zygote_jobfile && !forked && simulation_time >= zygote_fork_at) {
-      forked = true;
-      run_zygote();   // returns only in a child
-    }
     if (simulation_time >= next_report) {
       clock_gettime(CLOCK_MONOTONIC, &t1);
       double wall = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;

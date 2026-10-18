@@ -77,47 +77,6 @@ def collect_retrosh_files(subtrees: List[str]) -> List[Path]:
     return sorted(collected)
 
 
-def run_zygote_groups(
-    to_simulate: List[Tuple[Path, Path, Any]],
-    harness: Any,
-    jobs: int,
-    shas: Dict[str, str],
-    results_map: Dict[str, Dict[str, Any]],
-) -> List[Tuple[Path, Path, Any]]:
-    """Simulates the variants that can share a zygote, one configuration (chipset,
-    memory) after the other; returns the ones to run one by one."""
-    from loader.zygote import ZYGOTE_FORK_AT, ZygoteTooLate, simulate_group
-
-    harness_bin = Path(harness) if harness else REPO_ROOT / "build" / "nanomig_harness"
-    kick_rom = REPO_ROOT / "roms" / "kick13.rom"
-    if not harness_bin.is_file() or not kick_rom.is_file():
-        return to_simulate   # run_test reports what is missing
-    groups: Dict[Tuple[int, int], List[Tuple[Path, Path, Any]]] = {}
-    singles: List[Tuple[Path, Path, Any]] = []
-    for item in to_simulate:
-        cfg = item[2]
-        if cfg.events or not cfg.adf or not cfg.adf.is_file() or cfg.wait_s <= ZYGOTE_FORK_AT + 1.0:
-            singles.append(item)
-        else:
-            groups.setdefault((cfg.chipset, cfg.memory), []).append(item)
-
-    def on_result(rf: Path, res: Dict[str, Any]) -> None:
-        print(f"[{res['class']}] {res['variant']}: {res.get('detail', '')}", flush=True)
-        results_map[str(rf)] = res
-
-    for (chipset, memory), items in sorted(groups.items()):
-        if len(items) < 2:
-            singles += items
-            continue
-        print(f"Zygote for chipset 0x{chipset:02x}, memory 0x{memory:02x}: {len(items)} variants", flush=True)
-        try:
-            simulate_group(items, harness_bin, kick_rom, jobs, shas, on_result)
-        except ZygoteTooLate as e:
-            print(f"No zygote ({e}); these {len(items)} variants run one by one", flush=True)
-            singles += items
-    return singles
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parallel runner for vAmigaTS test subtrees under NanoMig."
@@ -156,13 +115,6 @@ def main() -> None:
         help="NanoMig checkout the harness was built from (default: external/NanoMig); "
              "its HEAD SHA is recorded in every result and used for resume. With "
              "uncommitted changes it is recorded as <sha>-dirty and never resumed.",
-    )
-    parser.add_argument(
-        "--zygote",
-        action="store_true",
-        help="Development tool: boot Kickstart once per configuration and fork the tests "
-             "from there (loader/zygote.py). Faster, but its results are not published; "
-             "confirm a change with a normal run.",
     )
     parser.add_argument(
         "--no-lock",
@@ -267,10 +219,6 @@ def main() -> None:
     try:
         if to_simulate:
             print(f"Simulating {len(to_simulate)} variants with {args.jobs} worker(s)...")
-            singles = to_simulate
-            if args.zygote:
-                shas = {"nanomig": nanomig_sha, "vamigats": vamigats_sha, "regression": regression_sha}
-                singles = run_zygote_groups(to_simulate, args.harness, args.jobs, shas, results_map)
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
                 future_to_info = {
                     executor.submit(
@@ -282,7 +230,7 @@ def main() -> None:
                         vamigats_sha=vamigats_sha,
                         regression_sha=regression_sha,
                     ): (rf, var_out, cfg)
-                    for (rf, var_out, cfg) in singles
+                    for (rf, var_out, cfg) in to_simulate
                 }
 
                 for future in concurrent.futures.as_completed(future_to_info):

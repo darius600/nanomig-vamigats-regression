@@ -135,12 +135,6 @@ python3 -m loader.vs_published runs/mine-copper ../nanomig-vamigats-results
 fewer differing pixels) or **worse** (a PASS turned FAIL, more differing
 pixels, or an ERROR), and exits with status 1 if anything got worse.
 
-For quick feedback while trying a change, `run_all --zygote` boots Kickstart
-once per configuration and forks every test from there (Kickstart 1.3 first
-reads the disk at 3.9 s; a 9 s test needs about 40 % less time). It is a
-development tool: such results are marked (`zygote_fork_at_s`) and
-`loader.publish` refuses them. Confirm a change with a normal run.
-
 Every result records the NanoMig commit it ran against, and `run_all` resumes
 by that commit. **Commit your change before the run:** with uncommitted
 changes the checkout is recorded as `<sha>-dirty` and nothing is resumed, so
@@ -177,7 +171,7 @@ vAmigaTS.
 | path | |
 |---|---|
 | `harness/` | `harness.cpp`, `build.sh`, `taps.vlt`, `inputs_tb.py` |
-| `loader/` | script parser, capture, mask, comparison, `run_test`, `run_all`, `zygote`, report, `side_by_side`, `recompare`, `publish`, `vs_published`, `vs_manual` |
+| `loader/` | script parser, capture, mask, comparison, `run_test`, `run_all`, report, `side_by_side`, `recompare`, `publish`, `vs_published`, `vs_manual` |
 | `tests/` | selftests |
 | `external/` | the two pinned submodules |
 | `roms/`, `build/`, `build-*/`, `runs/`, `side-by-side/` | local only, ignored by git |

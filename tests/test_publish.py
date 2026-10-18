@@ -46,10 +46,12 @@ class TestPublish(unittest.TestCase):
     def test_only_single_runs_are_published(self):
         single = (Path("a/result.json"), {"class": "PASS", "nanomig_sha": "0f3d2fd"})
         forked = (Path("b/result.json"), {"class": "PASS", "nanomig_sha": "0f3d2fd", "zygote_fork_at_s": 3.5})
+        shortened = (Path("d/result.json"), {"class": "FAIL", "nanomig_sha": "0f3d2fd", "test_wait_s": 1.0})
         dirty = (Path("c/result.json"), {"class": "FAIL", "nanomig_sha": "0f3d2fd-dirty"})
         check_publishable([single])
-        with self.assertRaisesRegex(RuntimeError, "zygote"):
-            check_publishable([single, forked])
+        for experimental in (forked, shortened):
+            with self.assertRaisesRegex(RuntimeError, "experimental"):
+                check_publishable([single, experimental])
         with self.assertRaisesRegex(RuntimeError, "uncommitted"):
             check_publishable([single, dirty])
 
@@ -229,11 +231,13 @@ class TestPublish(unittest.TestCase):
         self.assertIn("[Agnus/Copper](Agnus_Copper.md)", md)
         self.assertIn("How to read", md)
 
-        # Where to start: the compared count and the closest FAIL, before the summary
+        # The overview first (summary with the compared count, groups), then where to start
         self.assertIn("**3 variants compared: 1 identical to the reference (PASS), 2 different (FAIL).** "
                       "The other 1 were not compared", md)
         near_row = "| Agnus/Blitter/blit1 | blit1 | A500 OCS | 4 | [blit1.png](Agnus/Blitter/blit1/blit1.png) |"
-        self.assertLess(md.index(near_row), md.index("## Summary"))
+        self.assertLess(md.index("## Summary"), md.index("## Results per group"))
+        self.assertLess(md.index("## Results per group"), md.index("## Where to start"))
+        self.assertLess(md.index("## Where to start"), md.index(near_row))
         self.assertNotIn("| Agnus/Blitter/blit2 | blit2 |", md)
         self.assertIn("1 of the 2 FAILs come from tests whose source calls", md)
         self.assertIn("In all 1 PASS the `.raw` rebuilt", md)

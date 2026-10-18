@@ -92,7 +92,7 @@ def prepare_out_dir(out_path: Path) -> None:
 
 def new_result(config: Any, retrosh_path: Path, nanomig_sha: str, vamigats_sha: str,
                regression_sha: str, start_time: str) -> Dict[str, Any]:
-    """The result.json skeleton every run fills in (single runs and zygote runs alike)."""
+    """The result.json skeleton every simulated variant gets."""
     try:
         rel_retrosh = str(retrosh_path.relative_to(VAMIGATS_ROOT).as_posix())
     except ValueError:

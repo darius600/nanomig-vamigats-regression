@@ -287,14 +287,31 @@ def generate_test_report_markdown(
         simulated_line,
         code_line,
         "",
-        "## Where to start",
+        "## Summary",
         "",
         f"**{n_compared} variants compared: {summary['PASS']} identical to the reference (PASS), "
         f"{summary['FAIL']} different (FAIL).** The other {n_skipped} were not compared "
         f"(DEVIATING_CONFIG {summary['DEVIATING_CONFIG']}, NOT_CALIBRATED {summary['NOT_CALIBRATED']}, "
         f"NO_REFERENCE {summary['NO_REFERENCE']}; see [How to read](#how-to-read)). ERROR: {summary['ERROR']}.",
         "",
+        "| Variants | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
+        f"| {len(results)} | " + " | ".join(str(summary[c]) for c in CLASSES) + " |",
+        "",
+        "## Results per group",
+        "",
+        "| Group | Variants | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
+    for grp in sorted(by_group):
+        c = class_counts(by_group[grp])
+        lines.append(f"| [{grp}]({grp.replace('/', '_')}.md) | {len(by_group[grp])} | "
+                     + " | ".join(str(c[k]) for k in CLASSES) + " |")
+    lines.append(f"| **Total** | **{len(results)}** | " + " | ".join(f"**{summary[c]}**" for c in CLASSES) + " |")
+    lines.append("")
+
+    if near or synccpu_fails:
+        lines += ["## Where to start", ""]
     if near:
         lines += [
             f"The {min(10, len(near))} FAILs closest to the reference. Each is one test that reruns in "
@@ -315,25 +332,6 @@ def generate_test_report_markdown(
         ]
 
     lines += [
-        "## Summary",
-        "",
-        "| Variants | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
-        "|---:|---:|---:|---:|---:|---:|---:|",
-        f"| {len(results)} | " + " | ".join(str(summary[c]) for c in CLASSES) + " |",
-        "",
-        "## Results per group",
-        "",
-        "| Group | Variants | PASS | FAIL | DEVIATING_CONFIG | NOT_CALIBRATED | NO_REFERENCE | ERROR |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for grp in sorted(by_group):
-        c = class_counts(by_group[grp])
-        lines.append(f"| [{grp}]({grp.replace('/', '_')}.md) | {len(by_group[grp])} | "
-                     + " | ".join(str(c[k]) for k in CLASSES) + " |")
-    lines.append(f"| **Total** | **{len(results)}** | " + " | ".join(f"**{summary[c]}**" for c in CLASSES) + " |")
-
-    lines += [
-        "",
         "## How far off the FAILs are",
         "",
         "Differing pixels per FAIL, of the 716 x 285 = 204060 compared pixels. Most tests draw their result as "
@@ -431,8 +429,8 @@ def generate_readme_markdown() -> str:
         "[REFERENCES.md](./REFERENCES.md) explains this, which machines are compared, and the known cases "
         "where a reference contradicts the photo.",
         "",
-        "👉 **Start at [TestReport.md](./TestReport.md)**: the FAILs closest to the reference first, then the "
-        "summary, the results per group and how far off the FAILs are.",
+        "👉 **Start at [TestReport.md](./TestReport.md)**: summary, results per group, then where to start "
+        "(the FAILs closest to the reference) and how far off the FAILs are.",
         "",
         "## Contents",
         "",
@@ -460,14 +458,15 @@ def generate_readme_markdown() -> str:
 
 
 def check_publishable(results: List[Tuple[Path, Dict[str, Any]]]) -> None:
-    """Only single runs are published: a result simulated from a zygote (run_all
-    --zygote, a development tool) is refused, so is one of an uncommitted checkout."""
-    forked = [str(rf) for rf, r in results if "zygote_fork_at_s" in r]
+    """Only normal runs of a committed NanoMig checkout are published. Results of
+    experimental modes carry a marker (zygote_fork_at_s from the experimental/zygote
+    branch, test_wait_s from a shortened test run) and are refused."""
+    marked = [str(rf) for rf, r in results if "zygote_fork_at_s" in r or "test_wait_s" in r]
     dirty = [str(rf) for rf, r in results if str(r.get("nanomig_sha", "")).endswith("-dirty")]
     problems = []
-    if forked:
-        problems.append(f"{len(forked)} results come from a zygote run (rerun them without --zygote), "
-                        f"e.g. {forked[0]}")
+    if marked:
+        problems.append(f"{len(marked)} results come from an experimental mode (rerun them normally), "
+                        f"e.g. {marked[0]}")
     if dirty:
         problems.append(f"{len(dirty)} results come from an uncommitted NanoMig checkout, e.g. {dirty[0]}")
     if problems:
