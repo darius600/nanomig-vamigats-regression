@@ -32,8 +32,11 @@ class RunConfig:
 
 
 # vAmiga's input commands as NanoMig's input bits. Joystick bits as on nanomig's
-# joystick0/1 ports, [fire4,fire3,fire2,fire,up,down,left,right]; vAmiga's joystick 1 is
-# the mouse port (nanomig joystick0), joystick 2 the joystick port (joystick1).
+# joystick0/1 ports, [fire4,fire3,fire2,fire,up,down,left,right]. vAmiga's joystick 1 is
+# Amiga port 1 (JOY0DAT), joystick 2 port 2 (JOY1DAT). In NanoMig they cross: nanomig.v
+# feeds joystick0 into userio's _joy1 and joystick1 into _joy2, and userio (joy_swap = 0)
+# reads port 1 from _joy2 and port 2 from _joy1. So port 1 is joystick1, port 2 joystick0.
+JOY_PORT = {1: "joy1", 2: "joy0"}
 JOY_X = {"left": 0x02, "right": 0x01}
 JOY_Y = {"up": 0x08, "down": 0x04}
 MOUSE_BUTTONS = {"left": 0x1, "right": 0x2, "middle": 0x4}   # hid.v order
@@ -98,7 +101,7 @@ def parse_retrosh(path: Path | str) -> RunConfig:
                 joy[port][0] = JOY_X[direction]
             else:
                 joy[port][1] = JOY_Y[direction]
-            events.append((elapsed, f"joy{port - 1}", joy[port][0] | joy[port][1]))
+            events.append((elapsed, JOY_PORT[port], joy[port][0] | joy[port][1]))
             continue
         m = re.match(r"^mouse\s+1\s+press\s+(left|right|middle)$", line, re.IGNORECASE)
         if m:

@@ -186,13 +186,16 @@ class TestSelftests(unittest.TestCase):
         )
         self.assertTrue(bool(cfg5.chipset & 0x02))
 
-        # joystick script: held from the start, on the mouse port (nanomig joystick0)
+        # joystick 1 = Amiga port 1 (JOY0DAT) = nanomig joystick1 (userio crosses them),
+        # held from the start; joystick 2 = port 2 = joystick0
         cfg6 = parse_retrosh(
             TS / "Mainboard" / "Ports" / "JOYxDAT" / "joy0dat" / "joy0dat_1.retrosh"
         )
         self.assertTrue(cfg6.runnable)
-        self.assertEqual(cfg6.events, [(0.0, "joy0", 0x02)])
+        self.assertEqual(cfg6.events, [(0.0, "joy1", 0x02)])
         self.assertEqual(cfg6.wait_s, 9.0)
+        cfg6b = parse_retrosh(TS / "Mainboard" / "Ports" / "JOYxDAT" / "joy1dat" / "joy1dat_1.retrosh")
+        self.assertEqual(cfg6b.events[0][1], "joy0")
 
         # keyboard: waits add up, the key is released half a second after the press
         cfg7 = parse_retrosh(TS / "Mainboard" / "Ports" / "Keyboard" / "noack1" / "noack1.retrosh")
