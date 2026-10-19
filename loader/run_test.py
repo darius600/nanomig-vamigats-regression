@@ -145,6 +145,18 @@ def harness_args_for(kick_rom: Path, config: Any) -> List[str]:
     ] + [a for t, kind, value in config.events for a in ("--event", f"{t},{kind},0x{value:02x}")]
 
 
+def simulation_limits(config: Any) -> tuple:
+    """(CPU-time limit in s, wall-clock backstop in s) of a simulation.
+
+    The simulation runs about 100x slower than real time. A hung simulator keeps
+    burning CPU, while an overloaded machine only stretches the wall time. So the
+    limit is CPU time (3x the expected ~100x simulated time); the wall-clock
+    timeout (10x) is only a backstop for a process that hangs without using the CPU.
+    """
+    expected_cpu = config.wait_s * 100.0
+    return int(max(60.0, 3.0 * expected_cpu)), max(600.0, 10.0 * expected_cpu)
+
+
 def evaluate_capture(
     vga_file: Path, retrosh_path: Path, config: Any, out_path: Path, result: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -255,13 +267,7 @@ def run_test(
         (out_path / "result.json").write_text(json.dumps(result, indent=2))
         return result
 
-    # The simulation runs about 100x slower than real time. A hung simulator keeps
-    # burning CPU, while an overloaded machine only stretches the wall time. So the
-    # limit is CPU time (3x the expected ~100x simulated time); the wall-clock
-    # timeout (10x) is only a backstop for a process that hangs without using the CPU.
-    expected_cpu = config.wait_s * 100.0
-    cpu_limit_s = int(max(60.0, 3.0 * expected_cpu))
-    timeout_s = max(600.0, 10.0 * expected_cpu)
+    cpu_limit_s, timeout_s = simulation_limits(config)
 
     def limit_cpu():
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit_s, cpu_limit_s + 10))

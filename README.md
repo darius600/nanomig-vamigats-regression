@@ -118,6 +118,16 @@ variant keeps its `result.json` and the capture as `.frame.vga.gz` (about
 takes a machine-wide lock (`/tmp/nanomig-vamigats-run_all.lock`), so a second
 run waits instead of overloading the cores.
 
+Optionally, the simulations can go through a job queue shared by several runs
+and machines (simqueue, a separate project with a small HTTP protocol, see
+`loader/simqueue_client.py`). If a simqueue server answers at
+`http://127.0.0.1:8765` (or `$SIMQUEUE_URL`, or `--queue URL`), `run_all`
+submits each simulation as a job with the same harness command line and
+compares the returned capture here as usual; `--priority 2` lets other runs
+go first, `--local` skips the queue. Without an answering server, or when it
+stays unreachable or without workers for 15 minutes, `run_all` simulates
+itself. A result then also names the worker (`simulated_by`, a neutral id).
+
 ## Testing a change to NanoMig
 
 Build a harness from your own NanoMig checkout, run a group against it and

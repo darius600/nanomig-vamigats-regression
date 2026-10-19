@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from loader import simqueue_client
 from loader.retrosh import parse_retrosh
 from loader.run_test import BUILD_PROFILE, get_git_revision, get_git_sha, run_test
 from loader.report import write_reports
@@ -121,6 +122,23 @@ def main() -> None:
         action="store_true",
         help=f"Do not wait for the machine lock ({LOCK_PATH}); only one run_all should simulate at a time.",
     )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Simulate here even when a simqueue server is running.",
+    )
+    parser.add_argument(
+        "--queue",
+        default=None,
+        help=f"simqueue server to hand the simulations to (default: $SIMQUEUE_URL or "
+             f"{simqueue_client.DEFAULT_URL}); without an answering server run_all simulates here.",
+    )
+    parser.add_argument(
+        "--priority",
+        type=int,
+        default=1,
+        help="simqueue priority: 1 (default); 2 only gets workers when nothing of priority 1 waits.",
+    )
     args = parser.parse_args()
 
     t_start = time.time()
@@ -213,10 +231,32 @@ def main() -> None:
         # Runnable simulation candidate
         to_simulate.append((rf, variant_out, config))
 
-    # 2. Run simulations in parallel - one simulating run_all per machine
-    machine_lock = acquire_machine_lock(out_dir) if (to_simulate and not args.no_lock) else None
+    # 2. Simulate: through simqueue when its server answers, otherwise here in parallel -
+    # one simulating run_all per machine
+    queue = simqueue_client.connect(args.queue) if (to_simulate and not args.local) else None
+    machine_lock = None
     interrupted = False
     try:
+        if queue:
+            print(f"Simulating {len(to_simulate)} variants through simqueue at {queue.url} "
+                  f"(priority {args.priority}; its workers decide how many run at a time)...", flush=True)
+            to_simulate = simqueue_client.simulate(
+                queue,
+                to_simulate,
+                results_map,
+                harness=args.harness,
+                kick_rom=REPO_ROOT / "roms" / "kick13.rom",
+                shas={"nanomig": nanomig_sha, "vamigats": vamigats_sha, "regression": regression_sha},
+                label=" ".join(args.subtrees),
+                owner=str(out_dir),
+                priority=args.priority,
+                report=lambda res, cfg: print(f"[{res['class']}] {cfg.variant}: {res.get('detail', '')}",
+                                              flush=True),
+            )
+            if to_simulate:
+                print(f"Simulating the remaining {len(to_simulate)} variants here.", flush=True)
+        if to_simulate and not args.no_lock:
+            machine_lock = acquire_machine_lock(out_dir)
         if to_simulate:
             print(f"Simulating {len(to_simulate)} variants with {args.jobs} worker(s)...")
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
