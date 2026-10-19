@@ -78,6 +78,20 @@ def get_git_revision(repo_dir: Path) -> str:
 VAMIGATS_ROOT = REPO_ROOT / "external" / "vAmigaTS"
 
 
+def this_machine() -> str:
+    """The CPU this process runs on, as results record it ("<model>, <n> cores")."""
+    model, cores = "?", set()
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name") and model == "?":
+                model = line.split(":", 1)[1].strip()
+        out = subprocess.run(["lscpu", "-p=core,socket"], capture_output=True, text=True).stdout
+        cores = {line for line in out.splitlines() if line and not line.startswith("#")}
+    except Exception:
+        pass
+    return f"{model}, {len(cores) or '?'} cores"
+
+
 def prepare_out_dir(out_path: Path) -> None:
     """Empty the variant's output directory before a run (stale files / diff PNGs must not survive)."""
     if out_path.exists():
@@ -274,6 +288,7 @@ def run_test(
         ]
         cmd += [a for t, kind, value in config.events for a in ("--event", f"{t},{kind},0x{value:02x}")]
         result["harness_args"] = harness_args_for(kick_rom, config)
+        result["simulated_on"] = this_machine()
 
         try:
             proc = subprocess.run(

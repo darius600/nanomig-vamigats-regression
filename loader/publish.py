@@ -2,6 +2,7 @@
 """Publish a vAmigaTS regression run into the results repository."""
 
 import argparse
+from collections import Counter
 import concurrent.futures
 from datetime import datetime
 from functools import lru_cache
@@ -21,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from loader.report import fail_size_markdown, fail_size_rows, get_vamigats_group
 from loader.retrosh import parse_retrosh
-from loader.run_test import get_git_revision
+from loader.run_test import get_git_revision, this_machine
 from loader.side_by_side import render
 
 VAMIGATS = REPO_ROOT / "external" / "vAmigaTS"
@@ -265,6 +266,9 @@ def generate_test_report_markdown(
         simulated_line = f"- **Simulated:** {first} to {last} · **Published:** {date_str[:10]}"
     else:
         simulated_line = f"- **Published:** {date_str[:10]}"
+    machines = Counter(r["simulated_on"] for r in results if r.get("simulated_on"))
+    machine_line = ("- **Simulated on:** " + "; ".join(f"{m} ({n} variants)" for m, n in machines.most_common())
+                    if machines else "")
     if regression_sha.endswith("-dirty") or regression_sha == "unknown":
         code_line = f"- **Published with:** nanomig-vamigats-regression `{regression_sha}`"
     else:
@@ -285,6 +289,7 @@ def generate_test_report_markdown(
         f"**vAmigaTS:** [{vamigats_sha}](https://github.com/dirkwhoffmann/vAmigaTS/commit/{vamigats_sha}) · "
         f"**Build profile:** {build_profile}",
         simulated_line,
+        *([machine_line] if machine_line else []),
         code_line,
         "",
         "## Summary",
@@ -393,6 +398,9 @@ def generate_test_report_markdown(
         "reference.",
         "- **Image titles** give positions in vAmiga's coordinates (x 196–911, y 26–310); in the 716 × 285 "
         "panels, subtract 196 from x and 26 from y.",
+        *(["- **Several machines** simulated this run (see *Simulated on*, and `simulated_on` in each "
+           "`.result.json`). All ran the same harness binary, and a machine took part only after its captures "
+           "of a control set were byte-identical with those of the publishing machine."] if len(machines) > 1 else []),
         "- **Hand verdicts (2024):** The hand verdicts of August 2024 are kept in tag `manual-2024-08`, whose "
         "`_ecs` screenshots came from a simulation without an ECS mode.",
         "",
@@ -505,6 +513,7 @@ def publish(
         raise RuntimeError(f"No result.json files found in {run_path}")
 
     results_data: List[Tuple[Path, Dict[str, Any]]] = []
+    local_machine = this_machine()
     for rf in result_files:
         data = json.loads(rf.read_text(encoding="utf-8"))
         # Labels and machine come from the test sources, not from the run: a
@@ -516,6 +525,11 @@ def publish(
             data["machine"] = cfg.machine
         # the run's diff image is not published; the side-by-side image replaces it
         data.pop("diff_image", None)
+        # which CPU simulated it, not which machine: results from before simulated_on
+        # existed were all simulated on the publishing machine
+        data.pop("simulated_by", None)
+        if data.get("harness_exit_code") is not None and not data.get("simulated_on"):
+            data["simulated_on"] = local_machine
         results_data.append((rf, data))
     check_publishable(results_data)
 

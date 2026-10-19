@@ -181,12 +181,14 @@ class TestPublish(unittest.TestCase):
                 "class": "FAIL",
                 "differing_pixels": 4,
                 "machine": "A500_OCS_1MB",
+                "simulated_on": "CPU A, 8 cores",
                 "retrosh_path": "Agnus/Blitter/blit1/blit1.retrosh",
             },
             {
                 "variant": "blit2",
                 "class": "FAIL",
                 "differing_pixels": 4000,
+                "simulated_on": "CPU B, 11 cores",
                 "retrosh_path": "Agnus/Blitter/blit2/blit2.retrosh",
             },
             {
@@ -241,6 +243,10 @@ class TestPublish(unittest.TestCase):
         self.assertNotIn("| Agnus/Blitter/blit2 | blit2 |", md)
         self.assertIn("1 of the 2 FAILs come from tests whose source calls", md)
         self.assertIn("In all 1 PASS the `.raw` rebuilt", md)
+
+        # Which CPUs simulated, and the note on several machines
+        self.assertIn("- **Simulated on:** CPU A, 8 cores (1 variants); CPU B, 11 cores (1 variants)", md)
+        self.assertIn("**Several machines** simulated this run", md)
 
         # Group rows add up: every class has its column
         self.assertIn("| [CPU/68010](CPU_68010.md) | 1 | 0 | 0 | 1 | 0 | 0 | 0 |", md)
