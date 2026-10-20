@@ -1,7 +1,7 @@
 # nanomig-vamigats-regression
 
 Runs the [vAmiga Test Suite](https://github.com/dirkwhoffmann/vAmigaTS) (vAmigaTS)
-against [NanoMig](https://github.com/harbaum/NanoMig) in a Verilator simulation
+against [NanoMig](https://github.com/MiSTle-Dev/NanoMig) in a Verilator simulation
 and compares every resulting frame with the vAmigaTS reference image.
 
 **Results:** [nanomig-vamigats-results](https://github.com/darius600/nanomig-vamigats-results),
@@ -27,7 +27,7 @@ exactly that for NanoMig:
    fixed commit. Nothing in it is patched. The harness builds NanoMig's own
    simulation top (`sim/nanomig_tb.v`, `sim/sd_card.cpp`) out of tree with the
    Tang Nano 20k board profile (`src/tang/nano20k/top.sv`: fx68k, no cache).
-   The 13 tests that use a joystick, the mouse or the keyboard need a second
+   The 13 variants that use a joystick, the mouse or the keyboard need a second
    build: NanoMig's testbench ties these inputs to zero, so the input harness
    compiles a copy of `sim/nanomig_tb.v` whose input ports the harness drives
    (`harness/inputs_tb.py`); the NanoMig sources themselves are the same.
@@ -46,11 +46,15 @@ exactly that for NanoMig:
 
 ## Result classes
 
+A **test** is a vAmigaTS test directory (one program, one ADF); a **variant**
+is one of its `.retrosh` scripts, usually one per machine (`cross1_ocs`,
+`cross1_ecs`). Every count here and in the results is a count of variants.
+
 | class | meaning |
 |---|---|
 | `PASS` | identical to the reference inside the cutout |
 | `FAIL` | differs; `result.json` holds the number of differing pixels |
-| `DEVIATING_CONFIG` | the script asks for something NanoMig on a Tang Nano 20k cannot be configured to (a 68010, further floppy drives); not simulated |
+| `DEVIATING_CONFIG` | the script asks for something NanoMig on a Tang Nano 20k cannot be configured to (for example a 68010, further floppy drives, a preset CPU register value); not simulated |
 | `NOT_CALIBRATED` | the frame's raster geometry has no verified crop yet (the ERSY test's 908 × 627); simulated, not compared |
 | `NO_REFERENCE` | vAmigaTS ships no reference `.raw` for this variant; not simulated. 13 scripts at the pinned commit have none; one of them, the unnamed leftover `CPU/IPL/TAS/TAS1/.retrosh`, also asks for a 68010 and counts as `DEVIATING_CONFIG` |
 | `ERROR` | the simulation itself failed or timed out |
@@ -75,12 +79,24 @@ sources touch one of them carry the label.
 
 - Linux, or Ubuntu in WSL2 on Windows. On Windows, use git inside WSL:
   vAmigaTS contains symlinks that Git for Windows does not check out.
-- Verilator 5.052, `g++`, `make`.
+- Verilator 5.052, `g++`, `make`. The published results were made with 5.052;
+  other versions are untested and could give different frames. Distributions
+  often ship an older one; [build it from source](https://verilator.org/guide/latest/install.html).
 - Python 3 with `numpy` and `opencv` (`apt install python3-numpy python3-opencv`).
-- **Kickstart 1.3** as `roms/kick13.rom`. It is not part of this repository and
-  must never be committed.
+- **Kickstart 1.3** as `roms/kick13.rom`: the 512 KB image the published results
+  were made with has SHA-1 `90933936cce43ca9bc6bf375662c076b27e3c458`
+  (`sha1sum roms/kick13.rom`). The harness accepts any image of 256 KB or more,
+  so a different one does not stop it; every test would just fail. It is not
+  part of this repository and must never be committed.
 
 ## Usage
+
+**Sizes and durations.** The clone with both submodules takes about 6 GB
+(vAmigaTS alone 4.3 GB). One variant simulates 9 seconds of Amiga time, about
+100 times slower than real time: 12 to 16 minutes per variant. A group such as
+`Agnus/Copper` (223 variants to simulate) takes about 7 hours with `--jobs 8`
+on an 8-core machine, the whole suite about 66 hours. To try it, start with
+one test, or a small group such as `Agnus/DIW` (62 variants, about 2 hours).
 
 ```sh
 git clone --recursive https://github.com/darius600/nanomig-vamigats-regression.git
@@ -89,8 +105,8 @@ mkdir -p roms && cp /path/to/kick13.rom roms/
 harness/build.sh                                   # -> build/nanomig_harness
 HARNESS_INPUTS=1 harness/build.sh                  # -> build-inputs/, for the input tests
 
-# one test
-python3 -m loader.run_test external/vAmigaTS/Agnus/Copper/cross/cross1/cross1_ocs.retrosh --out runs/cross1
+# one test (its two variants, _ocs and _ecs, in parallel)
+python3 -m loader.run_all Agnus/Copper/cross/cross1 --out runs/cross1
 
 # a subtree, 8 simulations in parallel; resumes where it stopped
 python3 -m loader.run_all Agnus/Copper --jobs 8 --out runs/copper
@@ -101,16 +117,10 @@ python3 -m loader.side_by_side $(find runs/copper -name '*.frame.vga.gz') --out 
 # compare stored captures again after a change to the comparison (no simulation)
 python3 -m loader.recompare runs/copper --class NOT_CALIBRATED
 
-# selftests (compare every reference with itself, mutation, parser, colour table)
+# selftests (every reference against itself, single changed pixels must be
+# found, the script parser, the colour table); takes a few minutes
 python3 -m unittest discover -s tests
 ```
-
-**Sizes and durations.** The clone with both submodules takes about 6 GB
-(vAmigaTS alone 4.3 GB). One test simulates 9 seconds of Amiga time, about
-100 times slower than real time: 12 to 16 minutes per test. A group such as
-`Agnus/Copper` (223 variants to simulate) takes about 7 hours with `--jobs 8`
-on an 8-core machine, the whole suite about 66 hours. To try it, start with
-one test, or a small group such as `Agnus/DIW` (62 variants, about 2 hours).
 
 `run_all` writes `report.md` and `report.json` into its output directory. Each
 variant keeps its `result.json` and the capture as `.frame.vga.gz` (about
@@ -118,15 +128,11 @@ variant keeps its `result.json` and the capture as `.frame.vga.gz` (about
 takes a machine-wide lock (`/tmp/nanomig-vamigats-run_all.lock`), so a second
 run waits instead of overloading the cores.
 
-Optionally, the simulations can be spread over several machines by
-nanomig-vamigats-farm, a separate project: a job queue shared by several runs,
-with a small HTTP protocol (see `loader/farm_client.py`). If a farm server
-answers at `http://127.0.0.1:8765` (or `$VAMIGATS_FARM_URL`, or `--queue URL`), `run_all`
-submits each simulation as a job with the same harness command line and
-compares the returned capture here as usual; `--priority 2` lets other runs
-go first, `--local` skips the queue. Without an answering server, or when it
-stays unreachable or without workers for 15 minutes, `run_all` simulates
-itself. A result then also names the worker (`simulated_by`, a neutral id).
+If a job queue that spreads simulations over several machines answers at
+`http://127.0.0.1:8765` (nanomig-vamigats-farm, a separate project; or
+`$VAMIGATS_FARM_URL`, `--queue URL`), `run_all` hands its simulations to it and
+compares the returned captures here as usual; `--local` simulates here anyway.
+Without such a server, the normal case, `run_all` simulates itself.
 
 ## Testing a change to NanoMig
 
@@ -140,6 +146,10 @@ python3 -m loader.run_all Agnus/Copper --jobs 8 --out runs/mine-copper \
 git clone https://github.com/darius600/nanomig-vamigats-results.git ../nanomig-vamigats-results
 python3 -m loader.vs_published runs/mine-copper ../nanomig-vamigats-results
 ```
+
+For a first check, run only the test directories that exercise what you
+changed (a directory has two to six variants and takes 15 to 30 minutes with
+`--jobs 8`), then the whole group.
 
 `vs_published` lists every variant that got **better** (a FAIL turned PASS, or
 fewer differing pixels) or **worse** (a PASS turned FAIL, more differing
@@ -157,6 +167,21 @@ published results are made. Some variants differ from their script's name only
 in case (`vblank1_ecs.retrosh` saves `vblank1_ECS`); on a case-insensitive file
 system (Windows, macOS) stage with `git rm -r -q --cached . && git add -A`, so
 such renames reach git.
+
+## Adding a test
+
+The tests are vAmigaTS's. A new or changed test needs, in a vAmigaTS
+checkout, a folder with the program's ADF (vAmigaTS ships its ADFs prebuilt
+next to the `.s` sources), a `.retrosh` script like its neighbours' and the
+reference `.raw`, which vAmiga writes when it runs the script (vAmigaTS's
+`Scripts/Makefile3`, rule `%.raw`, with the vAmiga executable in `$VAMIGA` and
+`kick13.rom` in `/tmp`). Run it here by path:
+
+```sh
+python3 -m loader.run_all /path/to/vAmigaTS/Agnus/Copper/mytest --out runs/mytest
+```
+
+A variant without a `.raw` is reported as `NO_REFERENCE`.
 
 ## Another Minimig-derived core
 
@@ -188,6 +213,10 @@ vAmigaTS.
 
 ## Limitations
 
+- Only what the Tang Nano 20k build of NanoMig contains is tested: the fx68k
+  68000 and the OCS/ECS chip set. The board profile leaves `ENABLE_TG68K`
+  (68020) and `ENABLE_AGA` undefined (`src/tang/nano20k/top.sv`), and the
+  vAmigaTS machines compared here are A500 models; AGA is not covered.
 - NTSC frames are compared on the 237 rows an NTSC beam reaches. The crop of
   the ECS NTSC raster (908 × 524) is the unique best fit in all five NTSC
   `_ecs` tests; the one of the OCS NTSC raster (908 × 526) follows the PAL long
