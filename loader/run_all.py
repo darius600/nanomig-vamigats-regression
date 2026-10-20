@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from loader import simqueue_client
+from loader import farm_client
 from loader.retrosh import parse_retrosh
 from loader.run_test import BUILD_PROFILE, get_git_revision, get_git_sha, run_test
 from loader.report import write_reports
@@ -125,19 +125,19 @@ def main() -> None:
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Simulate here even when a simqueue server is running.",
+        help="Simulate here even when a nanomig-vamigats-farm server is running.",
     )
     parser.add_argument(
         "--queue",
         default=None,
-        help=f"simqueue server to hand the simulations to (default: $SIMQUEUE_URL or "
-             f"{simqueue_client.DEFAULT_URL}); without an answering server run_all simulates here.",
+        help=f"nanomig-vamigats-farm server to hand the simulations to (default: $VAMIGATS_FARM_URL or "
+             f"{farm_client.DEFAULT_URL}); without an answering server run_all simulates here.",
     )
     parser.add_argument(
         "--priority",
         type=int,
         default=1,
-        help="simqueue priority: 1 (default); 2 only gets workers when nothing of priority 1 waits.",
+        help="nanomig-vamigats-farm priority: 1 (default); 2 only gets workers when nothing of priority 1 waits.",
     )
     args = parser.parse_args()
 
@@ -231,16 +231,16 @@ def main() -> None:
         # Runnable simulation candidate
         to_simulate.append((rf, variant_out, config))
 
-    # 2. Simulate: through simqueue when its server answers, otherwise here in parallel -
+    # 2. Simulate: through nanomig-vamigats-farm when its server answers, otherwise here in parallel -
     # one simulating run_all per machine
-    queue = simqueue_client.connect(args.queue) if (to_simulate and not args.local) else None
+    queue = farm_client.connect(args.queue) if (to_simulate and not args.local) else None
     machine_lock = None
     interrupted = False
     try:
         if queue:
-            print(f"Simulating {len(to_simulate)} variants through simqueue at {queue.url} "
+            print(f"Simulating {len(to_simulate)} variants through nanomig-vamigats-farm at {queue.url} "
                   f"(priority {args.priority}; its workers decide how many run at a time)...", flush=True)
-            to_simulate = simqueue_client.simulate(
+            to_simulate = farm_client.simulate(
                 queue,
                 to_simulate,
                 results_map,

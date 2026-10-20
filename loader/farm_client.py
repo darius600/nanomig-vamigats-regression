@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""run_all's side of simqueue, the job queue all sessions on this machine share.
+"""run_all's side of nanomig-vamigats-farm, the job queue all sessions here share.
 
-When a simqueue server answers at --queue / $SIMQUEUE_URL (default
+When a farm server answers at --queue / $VAMIGATS_FARM_URL (default
 http://127.0.0.1:8765), run_all hands its simulations to it instead of running them
 itself. A job is exactly the harness command line run_test runs (same harness, ROM,
 ADF, options and limits); a worker, on this machine or another, returns the capture,
@@ -10,8 +10,8 @@ the same whichever machine simulated it, plus "simulated_by" (the worker's neutr
 
 If the server stays unreachable, or no worker is active, for GIVE_UP_S, run_all
 withdraws the run and simulates the rest itself (under the machine lock). The server
-and the workers live in their own repository (simqueue); only the HTTP protocol
-connects the two.
+and the workers live in their own repository (nanomig-vamigats-farm); only the HTTP
+protocol connects the two.
 """
 from datetime import datetime
 import gzip
@@ -38,7 +38,7 @@ from loader.run_test import (
 PROTOCOL = 1
 DEFAULT_URL = "http://127.0.0.1:8765"
 # unreachable, or no active worker, this long: simulate the rest here (shorter in tests)
-GIVE_UP_S = int(os.environ.get("SIMQUEUE_GIVE_UP_S", "900"))
+GIVE_UP_S = int(os.environ.get("VAMIGATS_FARM_GIVE_UP_S", "900"))
 POLL_S = 5
 PROGRESS_S = 1800    # a progress line in the log at least this often
 
@@ -70,13 +70,13 @@ class Client:
 
 
 def connect(url: Optional[str] = None) -> Optional[Client]:
-    """A client for the simqueue server, or None if none of our protocol answers."""
-    client = Client(url or os.environ.get("SIMQUEUE_URL") or DEFAULT_URL)
+    """A client for the nanomig-vamigats-farm server, or None if none of our protocol answers."""
+    client = Client(url or os.environ.get("VAMIGATS_FARM_URL") or DEFAULT_URL)
     try:
         hello = client.call("GET", "hello", timeout=5)
     except (OSError, ValueError):
         return None
-    if isinstance(hello, dict) and hello.get("service") == "simqueue" and hello.get("protocol") == PROTOCOL:
+    if isinstance(hello, dict) and hello.get("service") == "nanomig-vamigats-farm" and hello.get("protocol") == PROTOCOL:
         return client
     return None
 
@@ -87,7 +87,7 @@ def harness_for(harness: Optional[str], config: Any) -> Path:
 
 
 def job_for(jid: int, config: Any, harness_bin: Path, kick_rom: Path, sha: Callable[[Path], str]) -> Dict[str, Any]:
-    """run_test's harness call as a simqueue job: the files are put next to each other in
+    """run_test's harness call as a nanomig-vamigats-farm job: the files are put next to each other in
     the job's working directory, as run_test does with the .mem files."""
     files = {"harness": sha(harness_bin), "kick.rom": sha(kick_rom), "disk.adf": sha(Path(config.adf))}
     for mem in sorted(harness_bin.parent.glob("*.mem")):
@@ -180,7 +180,7 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
         return client.call("POST", "runs", spec, timeout=300)["run"]
 
     rid = submit(sorted(jobs))
-    print(f"simqueue run {rid}: {len(jobs)} jobs at {client.url}", flush=True)
+    print(f"farm run {rid}: {len(jobs)} jobs at {client.url}", flush=True)
     outstanding = set(jobs)
     cursor = 0
     trouble_since: Optional[float] = None   # server unreachable or no worker active since
@@ -192,11 +192,11 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
                 status = client.call("GET", f"runs/{rid}/results?after={cursor}")
             except urllib.error.HTTPError as e:
                 if e.code == 404:   # the server was restarted: submit what is left again
-                    print(f"simqueue no longer knows run {rid} (restarted?); submitting the "
+                    print(f"the farm no longer knows run {rid} (restarted?); submitting the "
                           f"{len(outstanding)} remaining jobs again", flush=True)
                     try:
                         rid, cursor = submit(sorted(outstanding)), 0
-                        print(f"simqueue run {rid}: {len(outstanding)} jobs", flush=True)
+                        print(f"farm run {rid}: {len(outstanding)} jobs", flush=True)
                         continue
                     except (OSError, ValueError):
                         pass
@@ -227,14 +227,14 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
                 stuck = status["workers_active"] == 0 and status["running"] == 0
                 trouble_since = (trouble_since or time.time()) if stuck else None
                 if time.time() - last_line > PROGRESS_S:
-                    print(f"simqueue run {rid}: {status['done']}/{status['total']} done, {status['running']} "
+                    print(f"farm run {rid}: {status['done']}/{status['total']} done, {status['running']} "
                           f"running, {status['pending']} pending, {status['workers_active']} workers active",
                           flush=True)
                     last_line = time.time()
             else:
                 trouble_since = trouble_since or time.time()
             if trouble_since and time.time() - trouble_since > GIVE_UP_S:
-                print(f"simqueue: {'server not reachable' if status is None else 'no worker active'} for "
+                print(f"farm: {'server not reachable' if status is None else 'no worker active'} for "
                       f"{GIVE_UP_S // 60} min; withdrawing run {rid}", flush=True)
                 cancel(client, rid)
                 return [todo[j] for j in sorted(outstanding)]

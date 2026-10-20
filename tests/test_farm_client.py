@@ -1,6 +1,6 @@
-"""run_all through simqueue gives the same results as run_all simulating itself.
+"""run_all through nanomig-vamigats-farm gives the same results as run_all simulating itself.
 
-Needs the simqueue repository next to this one (../simqueue) and the stored captures
+Needs the nanomig-vamigats-farm repository next to this one and the stored captures
 of runs/control-4315acb and runs/full-4315acb-worker; skipped otherwise. A dummy
 harness replays stored captures, so nothing is simulated (hence --no-lock).
 """
@@ -16,7 +16,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SIMQUEUE = REPO_ROOT.parent / "simqueue"
+FARM = REPO_ROOT.parent / "nanomig-vamigats-farm"
 TS = REPO_ROOT / "external" / "vAmigaTS"
 CONTROL = REPO_ROOT / "runs" / "control-4315acb"
 WORKER_RUN = REPO_ROOT / "runs" / "full-4315acb-worker"
@@ -68,12 +68,12 @@ def captures_present() -> bool:
     return all(c is None or any(c.glob("*.frame.vga.gz")) for _, c, _ in CASES.values())
 
 
-@unittest.skipUnless((SIMQUEUE / "server.py").is_file() and captures_present(),
-                     "needs ../simqueue and the stored captures under runs/")
-class TestRunAllThroughSimqueue(unittest.TestCase):
+@unittest.skipUnless((FARM / "server.py").is_file() and captures_present(),
+                     "needs ../nanomig-vamigats-farm and the stored captures under runs/")
+class TestRunAllThroughFarm(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(SIMQUEUE))
+        sys.path.insert(0, str(FARM))
         cls.srv = importlib.import_module("server")
         cls.wrk = importlib.import_module("worker")
 
@@ -138,7 +138,7 @@ class TestRunAllThroughSimqueue(unittest.TestCase):
         finally:
             worker.shutdown()
             http.shutdown()
-        self.assertIn("through simqueue", log)
+        self.assertIn("through nanomig-vamigats-farm", log)
         queued, queue_calls = self.results(queue_out), self.calls()
 
         self.assertEqual(sorted(local), sorted(CASES))
@@ -162,7 +162,7 @@ class TestRunAllThroughSimqueue(unittest.TestCase):
         http = self.srv.serve(state, port, host="127.0.0.1")
         try:
             out = self.base / "fallback"
-            log = self.run_all(out, "--queue", f"http://127.0.0.1:{port}", env={"SIMQUEUE_GIVE_UP_S": "2"})
+            log = self.run_all(out, "--queue", f"http://127.0.0.1:{port}", env={"VAMIGATS_FARM_GIVE_UP_S": "2"})
         finally:
             http.shutdown()
         self.assertIn("no worker active", log)
