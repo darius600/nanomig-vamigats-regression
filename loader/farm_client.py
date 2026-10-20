@@ -224,7 +224,9 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
                         results[str(rf)] = res
                         report(res, cfg)
                     cursor += 1
-                stuck = status["workers_active"] == 0 and status["running"] == 0
+                # nothing of this run runs and no worker asked lately: a worker whose slots are all
+                # busy with other runs does not ask until a job ends, so look at the whole farm
+                stuck = status["workers_active"] == 0 and status["running"] == 0 and not anyone_working(client)
                 trouble_since = (trouble_since or time.time()) if stuck else None
                 if time.time() - last_line > PROGRESS_S:
                     print(f"farm run {rid}: {status['done']}/{status['total']} done, {status['running']} "
@@ -245,6 +247,15 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
         raise
     cancel(client, rid)   # all fetched: the server can forget the run
     return []
+
+
+def anyone_working(client: Client) -> bool:
+    """Whether any worker of the farm is running a job (for any run) right now."""
+    try:
+        status = client.call("GET", "status", timeout=10)
+    except (OSError, ValueError):
+        return False
+    return any(w.get("busy", 0) > 0 and not w.get("banned") for w in status.get("workers", []))
 
 
 def cancel(client: Client, rid: str) -> None:

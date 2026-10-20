@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -155,6 +156,33 @@ class TestRunAllThroughFarm(unittest.TestCase):
         # the harness was called the same way: arguments, ROM, ADF, .mem files
         self.assertEqual(queue_calls, local_calls)
         self.assertIn("--event", local_calls["joy0dat_1"][0]["tail"])
+
+    def test_busy_worker_is_not_taken_for_none(self):
+        """A worker whose slots are all busy with another run does not ask the server until a
+        job ends; run_all must wait for it instead of giving up."""
+        state = self.srv.State(self.base / "state")
+        port = free_port()
+        http = self.srv.serve(state, port, host="127.0.0.1")
+        state.submit({"label": "other", "owner": "other", "jobs": [
+            {"id": 0, "label": "long", "files": {"x": "0" * 64}, "exec": "x", "argv": ["./x"]}]})
+        busy = state.workers.get("busy", "cpu", "1", reference=True)
+        state.take(busy, "0")
+        busy["last_seen"] -= 600   # running a long job, silent for 10 minutes
+        server = self.wrk.Server(f"http://127.0.0.1:{port}",
+                                 {"worker": "here", "cpu": self.wrk.cpu_model(),
+                                  "cores": self.wrk.physical_cores(), "reference": "1"})
+        worker = self.wrk.Worker(server, self.base / "w", self.base / "w" / "cache", 2, poll=0.5)
+        late = threading.Timer(8, worker.start)   # a slot of a worker comes free only later
+        late.start()
+        try:
+            out = self.base / "busy"
+            log = self.run_all(out, "--queue", f"http://127.0.0.1:{port}", env={"VAMIGATS_FARM_GIVE_UP_S": "2"})
+        finally:
+            late.cancel()
+            worker.shutdown()
+            http.shutdown()
+        self.assertNotIn("withdrawing", log)
+        self.assertEqual(sorted(self.results(out)), sorted(CASES))
 
     def test_without_workers_run_all_simulates_itself(self):
         state = self.srv.State(self.base / "state")
