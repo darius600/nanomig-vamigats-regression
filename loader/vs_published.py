@@ -7,15 +7,18 @@ For every variant of the run that the results repository also has:
 
   better     FAIL -> PASS, or a FAIL with fewer differing pixels
   worse      PASS -> FAIL, a FAIL with more differing pixels, or a new ERROR
-  unchanged  same class and the same number of differing pixels
+  moved      a FAIL with the same number of differing pixels whose capture
+             differs from the published one: the difference sits elsewhere
+  unchanged  same class and the same number of differing pixels (for a FAIL,
+             also the same capture, when both captures are there)
   not compared  not PASS/FAIL on one of the two sides (DEVIATING_CONFIG,
              NOT_CALIBRATED, NO_REFERENCE)
 
-A FAIL with the same number of pixels counts as unchanged even if other pixels
-differ; the images show where. The exit status is 1 when anything got worse,
-so the command can gate a change.
+The exit status is 1 when anything got worse, so the command can gate a change;
+a moved FAIL is listed but does not count as worse: look at its image.
 """
 import argparse
+import gzip
 import json
 from collections import Counter
 from pathlib import Path
@@ -54,6 +57,16 @@ def published_result(results_repo: Path, r: Dict[str, Any]) -> Optional[Dict[str
     return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
 
 
+def capture_moved(result_file: Path, r: Dict[str, Any], results_repo: Path) -> bool:
+    """Whether the run's capture differs from the published one (both must exist)."""
+    name = f"{r.get('variant', '')}.frame.vga.gz"
+    mine = result_file.parent / name
+    published = results_repo / Path(r.get("retrosh_path", "")).parent / name
+    if not (mine.is_file() and published.is_file()):
+        return False
+    return gzip.decompress(mine.read_bytes()) != gzip.decompress(published.read_bytes())
+
+
 def describe(r: Dict[str, Any]) -> str:
     p = pixels(r)
     return r.get("class", "?") if p in (None, 0) else f"FAIL {p} px"
@@ -75,8 +88,10 @@ def compare_run(run_dir: Path, results_repo: Path) -> Tuple[Counter, List[Tuple[
         shas["vamigats run"].add(new.get("vamigats_sha"))
         shas["vamigats published"].add(old.get("vamigats_sha"))
         v = verdict(new, old)
+        if v == "unchanged" and new.get("class") == "FAIL" and capture_moved(f, new, results_repo):
+            v = "moved"
         counts[v] += 1
-        if v in ("better", "worse"):
+        if v in ("better", "worse", "moved"):
             delta = (pixels(new) or 0) - (pixels(old) or 0)
             changed.append((v, str(Path(new["retrosh_path"]).parent), new["variant"],
                             f"{describe(old)} -> {describe(new)}", delta))
@@ -95,8 +110,8 @@ def main() -> None:
               f"{sorted(shas['vamigats published'])}); the references may differ.", file=sys.stderr)
     print(f"NanoMig: run {', '.join(sorted(map(str, shas['nanomig run'])))} | "
           f"published {', '.join(sorted(map(str, shas['nanomig published'])))}")
-    print(" | ".join(f"{k}: {counts[k]}" for k in ("better", "worse", "unchanged", "not compared", "not published")))
-    for kind in ("worse", "better"):
+    print(" | ".join(f"{k}: {counts[k]}" for k in ("better", "worse", "moved", "unchanged", "not compared", "not published")))
+    for kind in ("worse", "moved", "better"):
         rows = sorted((c for c in changed if c[0] == kind), key=lambda c: (-abs(c[4]), c[1], c[2]))
         if rows:
             print(f"\n{kind}:")

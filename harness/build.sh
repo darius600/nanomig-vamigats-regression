@@ -10,11 +10,10 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 NANOMIG_DIR="${NANOMIG_DIR:-$REPO_ROOT/external/NanoMig}"
 
-# Resolve target build directory
+# Resolve target build directory: the argument, else build/ (build-inputs/) in the repository,
+# wherever the script is called from
 if [ -n "$1" ]; then
     BUILD_DIR=$(realpath "$1")
-elif [ "$PWD" != "$SCRIPT_DIR" ] && [ "$PWD" != "$REPO_ROOT" ]; then
-    BUILD_DIR="$PWD"
 elif [ -n "$HARNESS_INPUTS" ]; then
     BUILD_DIR="$REPO_ROOT/build-inputs"
 else

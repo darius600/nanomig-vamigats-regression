@@ -10,16 +10,22 @@ import gzip
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote
+
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from loader.compare import compared_area, quantize_4bit
+from loader.mask import REF_HEIGHT, REF_WIDTH, build_mask
 from loader.report import fail_size_markdown, fail_size_rows, get_vamigats_group
 from loader.retrosh import parse_retrosh
 from loader.run_test import get_git_revision, this_machine
@@ -35,86 +41,16 @@ def calls_synccpu(test_dir: str) -> bool:
                for s in (VAMIGATS / test_dir).glob("*.s"))
 
 
-def parse_manual_verdicts(md_content: str) -> Dict[str, Tuple[str, str]]:
-    """Parse hand verdicts from a group markdown table in manual-2024-08.
-
-    Columns: Test Case | Description / Source | Last run | Result | Comment
-    Returns a dict mapping test_case -> (result_raw, comment_raw).
-    """
-    verdicts = {}
-    for line in md_content.splitlines():
-        if not line.startswith("|"):
-            continue
-        cols = [c.strip() for c in line.split("|")]
-        # Table row: cols[0] is empty, cols[1] is Test Case, cols[4] is Result, cols[5] is Comment
-        if len(cols) >= 6:
-            test_case = cols[1]
-            if test_case in ("Test Case", "Test", "---") or test_case.startswith("---"):
-                continue
-            res = cols[4]
-            comment = " | ".join(cols[5:-1]).strip() if len(cols) > 7 else (cols[5] if len(cols) > 5 else "")
-            verdicts[test_case] = (res, comment)
-    return verdicts
-
-
-def normalize_verdict(raw_verdict: str) -> str:
-    """Normalize hand verdict text into 'identical', 'different', or 'n/a'."""
-    if "Identical" in raw_verdict:
-        return "identical"
-    if "Different" in raw_verdict:
-        return "different"
-    return "n/a"
-
-
-def compute_agreement(
-    manual_verdicts: Dict[str, Tuple[str, str]],
-    variants_by_test_dir: Dict[str, List[Dict[str, Any]]],
-) -> Dict[str, int]:
-    """Compute agreement between hand verdicts and automatic results for a group.
-
-    Agreement categories per test directory:
-    - both identical: hand == 'identical' and auto == 'identical'
-    - both different: hand == 'different' and auto == 'different'
-    - hand ident / auto diff: hand == 'identical' and auto == 'different'
-    - hand diff / auto ident: hand == 'different' and auto == 'identical'
-    - n/a: either hand verdict or automatic verdict is 'n/a'
-    """
-    tally = {
-        "both_identical": 0,
-        "both_different": 0,
-        "hand_ident_auto_diff": 0,
-        "hand_diff_auto_ident": 0,
-        "na": 0,
-    }
-
-    all_test_dirs = set(manual_verdicts) | set(variants_by_test_dir)
-    for td in all_test_dirs:
-        variants = variants_by_test_dir.get(td, [])
-        classes = {v.get("class") for v in variants}
-        if not variants:
-            auto = "n/a"
-        elif classes == {"PASS"}:
-            auto = "identical"
-        elif "FAIL" in classes:
-            auto = "different"
-        else:
-            auto = "n/a"
-
-        raw_hand = manual_verdicts.get(td, ("", ""))[0]
-        hand = normalize_verdict(raw_hand)
-
-        if hand == "identical" and auto == "identical":
-            tally["both_identical"] += 1
-        elif hand == "different" and auto == "different":
-            tally["both_different"] += 1
-        elif hand == "identical" and auto == "different":
-            tally["hand_ident_auto_diff"] += 1
-        elif hand == "different" and auto == "identical":
-            tally["hand_diff_auto_ident"] += 1
-        else:
-            tally["na"] += 1
-
-    return tally
+def reference_uniform(retrosh: Path, cfg: Any) -> bool:
+    """Whether the reference shows one single colour (at 4 bits per channel) in the area
+    the comparison looks at: a PASS then only says that NanoMig draws that colour there."""
+    raw = retrosh.with_suffix(".raw")
+    if not raw.is_file():
+        return False
+    ref = np.fromfile(raw, np.uint8).reshape(REF_HEIGHT, REF_WIDTH, 3)
+    area, _ = compared_area(build_mask(cfg.cutout), ref, bool(cfg.chipset & 0x02))
+    pixels = quantize_4bit(ref)[area]
+    return bool(len(pixels) == 0 or (pixels == pixels[0]).all())
 
 
 CLASSES = ["PASS", "FAIL", "DEVIATING_CONFIG", "NOT_CALIBRATED", "NO_REFERENCE", "ERROR"]
@@ -123,6 +59,8 @@ NOT_COMPARED = ("DEVIATING_CONFIG", "NOT_CALIBRATED", "NO_REFERENCE")
 MACHINES = {"A500_OCS_1MB": "A500 OCS", "A500_ECS_1MB": "A500 ECS", "A500_PLUS_1MB": "A500+"}
 NEAR_MISS_PX = 20
 REGRESSION_URL = "https://github.com/darius600/nanomig-vamigats-regression"
+NANOMIG_URL = "https://github.com/MiSTle-Dev/NanoMig"
+VAMIGATS_URL = "https://github.com/dirkwhoffmann/vAmigaTS"
 
 
 def class_counts(results: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -148,6 +86,26 @@ def image_link(r: Dict[str, Any]) -> str:
     return f"[{variant}.png]({test_dir_of(r)}/{variant}.png)"
 
 
+def test_link(r: Dict[str, Any], vamigats_sha: str) -> str:
+    """The test directory, linked to vAmigaTS at the pinned commit (source, photos, README)."""
+    td = test_dir_of(r)
+    return f"[{td}]({VAMIGATS_URL}/tree/{vamigats_sha}/{quote(td)})"
+
+
+WHERE_RE = re.compile(r"\(x (\d+)-(\d+), y (\d+)-(\d+)\)")
+
+
+def where_from_render(outcome: str) -> str:
+    """'x 196–199, y 178' from a side-by-side outcome ('... 4 px differ (x 196-199, y 178-178)')."""
+    m = WHERE_RE.search(outcome)
+    if not m:
+        return ""
+    x0, x1, y0, y1 = m.groups()
+    x = f"x {x0}" if x0 == x1 else f"x {x0}–{x1}"
+    y = f"y {y0}" if y0 == y1 else f"y {y0}–{y1}"
+    return f"{x}, {y}"
+
+
 def not_compared_reason(r: Dict[str, Any]) -> str:
     c = r.get("class")
     if c == "NOT_CALIBRATED":
@@ -165,14 +123,14 @@ def sorted_by_test(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def generate_group_markdown(
     group: str,
     results: List[Dict[str, Any]],
-    manual_verdicts: Dict[str, Tuple[str, str]],
     nanomig_sha: str,
     vamigats_sha: str,
 ) -> str:
     """Generate markdown page for a group (e.g. Agnus_Blitter.md).
 
     The compared variants (PASS, FAIL, ERROR) come first, in path order; the ones
-    that were not compared follow in their own table at the end.
+    that were not compared follow in their own table at the end. The test cell links
+    the test in vAmigaTS.
     """
     counts = class_counts(results)
     compared = [r for r in results if r.get("class", "ERROR") not in NOT_COMPARED]
@@ -186,28 +144,27 @@ def generate_group_markdown(
         status += (f" (DEVIATING_CONFIG {counts['DEVIATING_CONFIG']}, NOT_CALIBRATED "
                    f"{counts['NOT_CALIBRATED']}, NO_REFERENCE {counts['NO_REFERENCE']}; listed at the end)")
     lines = [
-        f"# {group.replace('/', '_')}",
+        f"# {group}",
         "",
-        f"- **NanoMig:** [{nanomig_sha}](https://github.com/harbaum/NanoMig/commit/{nanomig_sha}) | "
-        f"**vAmigaTS:** [{vamigats_sha}](https://github.com/dirkwhoffmann/vAmigaTS/commit/{vamigats_sha})",
+        f"- **NanoMig:** [{nanomig_sha}]({NANOMIG_URL}/commit/{nanomig_sha}) | "
+        f"**vAmigaTS:** [{vamigats_sha}]({VAMIGATS_URL}/commit/{vamigats_sha})",
         status,
         "",
     ]
 
     if compared:
         lines += [
-            "| Test | Variant | Machine | Result | Differing px | Labels | Hand 2024 | Hand comment | Image |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| Test | Variant | Machine | Result | Differing px | Labels | Image |",
+            "|---|---|---|---|---|---|---|",
         ]
         for r in sorted_by_test(compared):
             res_class = r.get("class", "ERROR")
             diff_px = {"PASS": "0", "FAIL": str(r.get("differing_pixels", 0))}.get(res_class, "—")
-            hand_res, hand_comment = manual_verdicts.get(test_dir_of(r), ("", ""))
             image_cell = image_link(r) if res_class in ("PASS", "FAIL") else "—"
             labels = ", ".join(f"`{label}`" for label in r.get("labels", []))
             lines.append(
-                f"| {test_dir_of(r)} | {r.get('variant', '')} | {machine_of(r)} | {res_class} | {diff_px} "
-                f"| {labels} | {hand_res} | {hand_comment} | {image_cell} |"
+                f"| {test_link(r, vamigats_sha)} | {r.get('variant', '')} | {machine_of(r)} | {res_class} "
+                f"| {diff_px} | {labels} | {image_cell} |"
             )
     else:
         lines.append("No variant of this group was compared.")
@@ -223,7 +180,7 @@ def generate_group_markdown(
         for r in sorted_by_test(skipped):
             labels = ", ".join(f"`{label}`" for label in r.get("labels", []))
             lines.append(
-                f"| {test_dir_of(r)} | {r.get('variant', '')} | {machine_of(r)} | {r.get('class')} "
+                f"| {test_link(r, vamigats_sha)} | {r.get('variant', '')} | {machine_of(r)} | {r.get('class')} "
                 f"| {not_compared_reason(r)} | {labels} |"
             )
 
@@ -233,19 +190,21 @@ def generate_group_markdown(
 
 def generate_test_report_markdown(
     results: List[Dict[str, Any]],
-    group_agreements: Dict[str, Dict[str, int]],
     nanomig_sha: str,
     vamigats_sha: str,
     regression_sha: str,
     build_profile: str,
     date_str: str,
     synccpu_fails: Optional[int] = None,
+    where: Optional[Dict[str, str]] = None,
 ) -> str:
     """Generate TestReport.md content.
 
     synccpu_fails: number of FAILs from tests whose source calls vAmigaTS's
-    synccpu routine (None leaves the paragraph out).
+    synccpu routine (None leaves the paragraph out). where: the area of the
+    differing pixels per "<test dir>/<variant>", from the rendered images.
     """
+    where = where or {}
     summary = class_counts(results)
     by_group: Dict[str, List[Dict[str, Any]]] = {}
     for r in results:
@@ -269,24 +228,32 @@ def generate_test_report_markdown(
     machines = Counter(r["simulated_on"] for r in results if r.get("simulated_on"))
     machine_line = ("- **Simulated on:** " + "; ".join(f"{m} ({n} variants)" for m, n in machines.most_common())
                     if machines else "")
-    if regression_sha.endswith("-dirty") or regression_sha == "unknown":
-        code_line = f"- **Published with:** nanomig-vamigats-regression `{regression_sha}`"
-    else:
-        code_line = (f"- **Published with:** [nanomig-vamigats-regression `{regression_sha[:7]}`]"
-                     f"({REGRESSION_URL}/commit/{regression_sha})")
+    def commit_ref(sha: str) -> str:
+        if sha.endswith("-dirty") or sha == "unknown":
+            return f"`{sha}`"
+        return f"[`{sha[:7]}`]({REGRESSION_URL}/commit/{sha})"
+
+    # every result records the code of this repository that made it
+    made_with = Counter(r["regression_sha"] for r in results if r.get("regression_sha"))
+    code_line = "- **nanomig-vamigats-regression:** "
+    if made_with:
+        code_line += ("results made with " + ", ".join(f"{commit_ref(s)} ({n} variants)"
+                                                       for s, n in made_with.most_common()) + "; ")
+    code_line += f"published with {commit_ref(regression_sha)}"
 
     def near_rows(rows: List[Dict[str, Any]]) -> List[str]:
-        out = ["| Test | Variant | Machine | Differing px | Image |", "|---|---|---|---:|---|"]
+        out = ["| Test | Variant | Machine | Differing px | Where | Image |", "|---|---|---|---:|---|---|"]
         for r in rows:
-            out.append(f"| {test_dir_of(r)} | {r.get('variant', '')} | {machine_of(r)} "
-                       f"| {r.get('differing_pixels')} | {image_link(r)} |")
+            out.append(f"| {test_link(r, vamigats_sha)} | {r.get('variant', '')} | {machine_of(r)} "
+                       f"| {r.get('differing_pixels')} | {where.get(test_dir_of(r) + '/' + r.get('variant', ''), '')} "
+                       f"| {image_link(r)} |")
         return out
 
     lines = [
         "# NanoMig vAmigaTS Test Report",
         "",
-        f"- **NanoMig:** [{nanomig_sha}](https://github.com/harbaum/NanoMig/commit/{nanomig_sha}) · "
-        f"**vAmigaTS:** [{vamigats_sha}](https://github.com/dirkwhoffmann/vAmigaTS/commit/{vamigats_sha}) · "
+        f"- **NanoMig:** [{nanomig_sha}]({NANOMIG_URL}/commit/{nanomig_sha}) · "
+        f"**vAmigaTS:** [{vamigats_sha}]({VAMIGATS_URL}/commit/{vamigats_sha}) · "
         f"**Build profile:** {build_profile}",
         simulated_line,
         *([machine_line] if machine_line else []),
@@ -320,7 +287,8 @@ def generate_test_report_markdown(
     if near:
         lines += [
             f"The {min(10, len(near))} FAILs closest to the reference. Each is one test that reruns in "
-            "about 15 minutes:",
+            "about 15 minutes; the test links to its source, description and hardware photos in vAmigaTS, "
+            "and *Where* is the area of the differing pixels in vAmiga's coordinates (see the image):",
             "",
             *near_rows(near[:10]),
             "",
@@ -332,7 +300,8 @@ def generate_test_report_markdown(
             f"**One routine behind many FAILs:** {synccpu_fails} of the {summary['FAIL']} FAILs come from tests "
             "whose source calls vAmigaTS's `synccpu` routine (`include/util.i`). It synchronises the CPU with the "
             "beam and draws the magenta bar at the top of the image. Where that bar differs, everything the CPU "
-            "draws after it is shifted as well, so these FAILs may share one cause. That has not been established yet.",
+            "draws after it is shifted as well, so these FAILs may share one cause. That has not been established "
+            "yet. Their rows carry the label `synccpu`.",
             "",
         ]
 
@@ -344,28 +313,7 @@ def generate_test_report_markdown(
         "more about the kind of difference than about how close NanoMig is.",
         "",
         *fail_size_markdown(fail_size_rows(results)),
-        "",
-        "## Agreement with the 2024 hand verdicts",
-        "",
-        "Counted per **test directory**, not per variant: one directory holds the variants of one test "
-        "(`_ocs`, `_ecs`, ...). A directory counts as identical when all its compared variants PASS, and as "
-        "different when one of them FAILs. Groups without any hand verdict are left out. Where the two "
-        "disagree, the class counts: it comes from the exact comparison, while the hand verdict was made by "
-        "eye on older screenshots.",
-        "",
-        "| Group | Both identical | Both different | Hand identical, now different | Hand different, now identical |",
-        "|---|---:|---:|---:|---:|",
     ]
-    keys = ("both_identical", "both_different", "hand_ident_auto_diff", "hand_diff_auto_ident")
-    totals = {k: 0 for k in keys}
-    for grp in sorted(by_group):
-        agr = group_agreements.get(grp, {})
-        if not any(agr.get(k, 0) for k in keys):
-            continue
-        for k in keys:
-            totals[k] += agr.get(k, 0)
-        lines.append(f"| [{grp}]({grp.replace('/', '_')}.md) | " + " | ".join(str(agr.get(k, 0)) for k in keys) + " |")
-    lines.append("| **Total** | " + " | ".join(f"**{totals[k]}**" for k in keys) + " |")
 
     if passes:
         raw_sentence = (f"In all {len(passes)} PASS" if raw_identical == len(passes)
@@ -377,39 +325,46 @@ def generate_test_report_markdown(
         "",
         "## How to read",
         "",
+        "- **Test and variant:** a test is a vAmigaTS test directory (one program); a variant is one of its "
+        "scripts, usually one per machine. All counts are variants. Variant names come from vAmigaTS and follow "
+        "no single scheme; the *Machine* column says which machine a variant runs.",
         "- **PASS:** The frame is identical to the vAmigaTS reference at the Amiga's 4 bits per channel inside "
-        f"the cutout. {raw_sentence}".rstrip(),
+        f"the cutout, the part of the screen the script compares. {raw_sentence}".rstrip(),
         "- **FAIL:** Differences were found inside the compared area (cutout). The group pages give the number "
         "of differing pixels and link the image.",
         "- **DEVIATING_CONFIG:** The script asks for something this run could not set NanoMig on a Tang Nano 20k "
         "up for, e.g. a 68010. Not simulated; the reason is on the group page.",
         "- **NOT_CALIBRATED:** Simulated, but the raster has no verified crop yet, so it is not compared.",
-        "- **NTSC** frames are compared on the 237 rows an NTSC beam reaches; the `_ocs` NTSC references are "
-        "black there, so their PASS says little.",
+        "- **NTSC** frames are compared on the 237 rows an NTSC beam reaches.",
         "- **NO_REFERENCE:** vAmigaTS ships no reference `.raw` for this variant; not simulated.",
         "- **ERROR:** The simulation itself failed or exceeded its time limit. Rerun it.",
         "- **`raw_status` \"missing colours\"** (in `.result.json`): NanoMig produced a colour that no reference "
         "uses, so no `.raw` can be rebuilt. The frame is still compared at 4 bits per channel.",
         "- **The references are vAmiga screenshots**, not photos of real hardware: `PASS` means identical to "
         "vAmiga. See [REFERENCES.md](REFERENCES.md).",
-        "- **Labels** never change a result. `denise-ecs-sensitive`: an `_ecs` test that uses an ECS-only Denise "
-        "feature; vAmiga's A500 ECS has an OCS Denise, NanoMig's ECS mode an ECS Denise. "
-        "`reference-contradicts-photo`: the vAmigaTS hardware photo of this test shows something else than the "
-        "reference.",
+        "- **Labels** never change a result. `reference-uniform`: the reference is one single colour in the "
+        "compared area (all NTSC `_ocs` references are black there), so a PASS only says that NanoMig draws that "
+        "colour. `synccpu`: the test calls vAmigaTS's `synccpu` routine (see *Where to start*). "
+        "`denise-ecs-sensitive`: an `_ecs` test that uses an ECS-only Denise feature; vAmiga's A500 ECS has an "
+        "OCS Denise, NanoMig's ECS mode an ECS Denise. Where the test also has an `_plus` variant (A500+, ECS "
+        "Denise on both sides), that variant is the like-for-like comparison: a FAIL it shares is not explained "
+        "by the label. `reference-contradicts-photo`: the vAmigaTS hardware photo of this test shows something "
+        "else than the reference.",
         "- **Image titles** give positions in vAmiga's coordinates (x 196–911, y 26–310); in the 716 × 285 "
         "panels, subtract 196 from x and 26 from y.",
         *(["- **Several machines** simulated this run (see *Simulated on*, and `simulated_on` in each "
            "`.result.json`). All ran the same harness binary, and a machine took part only after its captures "
            "of a control set were byte-identical with those of the publishing machine."] if len(machines) > 1 else []),
-        "- **Hand verdicts (2024):** The hand verdicts of August 2024 are kept in tag `manual-2024-08`, whose "
-        "`_ecs` screenshots came from a simulation without an ECS mode.",
+        "- **2024:** an earlier comparison by eye is kept in tag `manual-2024-08`; the exact comparison here "
+        "replaces it.",
         "",
     ]
     if near:
         lines += [
             "## Near misses",
             "",
-            f"All FAILs with {NEAR_MISS_PX} differing pixels or fewer, fewest first.",
+            f"All FAILs with {NEAR_MISS_PX} differing pixels or fewer, fewest first; the first "
+            f"{min(10, len(near))} are those under *Where to start*.",
             "",
             *near_rows(near),
             "",
@@ -423,8 +378,8 @@ def generate_readme_markdown() -> str:
     lines = [
         "# nanomig-vamigats-results",
         "",
-        "Results of running the [vAmiga Test Suite](https://github.com/dirkwhoffmann/vAmigaTS) (vAmigaTS) "
-        "against the [NanoMig](https://github.com/harbaum/NanoMig) core in a Verilator simulation.",
+        f"Results of running the [vAmiga Test Suite]({VAMIGATS_URL}) (vAmigaTS) "
+        f"against the [NanoMig]({NANOMIG_URL}) core in a Verilator simulation.",
         "",
         "NanoMig is based on the [MiSTer Minimig-AGA](https://github.com/MiSTer-devel/Minimig-AGA_MiSTer) code "
         "(NanoMig's README says so), so a FAIL here may concern other Minimig-derived cores as well. Whether it "
@@ -442,13 +397,16 @@ def generate_readme_markdown() -> str:
         "",
         "## Contents",
         "",
-        "- **Group pages (`<Chip>_<Group>.md`):** one row per compared variant with machine, result, differing "
-        "pixels, labels, the 2024 hand verdict where one exists, and a link to the image; the variants that were "
+        "- **Group pages (`<Chip>_<Group>.md`):** one row per compared variant with its test (linked to "
+        "vAmigaTS), machine, result, differing pixels, labels and a link to the image; the variants that were "
         "not compared follow at the end, with the reason.",
         "- **Images (`.png`)**, per compared variant: NanoMig | vAmigaTS reference | differences "
         "(differing pixels red, area outside the compared cutout shaded blue). Positions in the titles are "
         "vAmiga's coordinates (x 196–911, y 26–310).",
-        "- **Captures (`.frame.vga.gz`):** NanoMig's raw VGA frame, so the comparison can be repeated without simulating.",
+        "- **Captures (`.frame.vga.gz`):** NanoMig's raw VGA frame, so the comparison can be repeated without "
+        "simulating: with a checkout of nanomig-vamigats-regression, "
+        "`python3 -m loader.side_by_side <path>/<variant>.frame.vga.gz --out /tmp/check` compares a capture "
+        "again and draws its image.",
         "- **`.result.json`:** per variant: class, differing pixels, machine, labels, configuration, versions and timing.",
         "",
         "## Running it yourself",
@@ -456,10 +414,6 @@ def generate_readme_markdown() -> str:
         f"The harness, the comparison and the commands are in [nanomig-vamigats-regression]({REGRESSION_URL}). "
         "Its README shows how to run one test or a group, also against your own NanoMig checkout, and how to "
         "compare that run with these results (`loader.vs_published`).",
-        "",
-        "## Historical Hand Comparison (2024-08)",
-        "",
-        "The previous manual comparison from August 2024 is preserved in git tag `manual-2024-08`. Note that `_ecs` screenshots in that tag originated from a simulation run without an ECS mode.",
         "",
     ]
     return "\n".join(lines)
@@ -496,8 +450,8 @@ def publish(
 ) -> None:
     """Publish a run directory into the results repository.
 
-    The hand verdicts always come from the tag; its old screenshots are added
-    to the images only with with_old (images then grow from 3 to 6 panels).
+    The tag's old screenshots are added to the images only with with_old (images
+    then grow from 3 to 6 panels).
     """
     run_path = Path(run_dir).resolve()
     results_path = Path(results_repo).resolve()
@@ -521,8 +475,13 @@ def publish(
         retrosh_file = VAMIGATS / data.get("retrosh_path", "")
         if retrosh_file.is_file():
             cfg = parse_retrosh(retrosh_file)
-            data["labels"] = cfg.labels
+            data["labels"] = list(cfg.labels)
             data["machine"] = cfg.machine
+            if data.get("class") in ("PASS", "FAIL", "ERROR"):
+                if reference_uniform(retrosh_file, cfg):
+                    data["labels"].append("reference-uniform")
+                if calls_synccpu(test_dir_of(data)):
+                    data["labels"].append("synccpu")
         # the run's diff image is not published; the side-by-side image replaces it
         data.pop("diff_image", None)
         # which CPU simulated it, not which machine: results from before simulated_on
@@ -547,37 +506,25 @@ def publish(
     regression_sha = get_git_revision(REPO_ROOT)
     date_str = datetime.now().astimezone().isoformat()
 
-    # 2. Extract old tag tree into a temp dir
+    # 2. The tag's old screenshots, only when they go into the images
     with tempfile.TemporaryDirectory() as tmp_dir:
         old_dir = Path(tmp_dir)
-        p1 = subprocess.Popen(
-            ["git", "-C", str(results_path), "archive", tag],
-            stdout=subprocess.PIPE,
-        )
-        p2 = subprocess.Popen(["tar", "-x", "-C", str(old_dir)], stdin=p1.stdout)
-        p1.stdout.close()
-        p2.communicate()
-        if p2.returncode != 0:
-            raise RuntimeError(f"Failed to extract tag '{tag}' via git archive")
+        if with_old:
+            p1 = subprocess.Popen(
+                ["git", "-C", str(results_path), "archive", tag],
+                stdout=subprocess.PIPE,
+            )
+            p2 = subprocess.Popen(["tar", "-x", "-C", str(old_dir)], stdin=p1.stdout)
+            p1.stdout.close()
+            p2.communicate()
+            if p2.returncode != 0:
+                raise RuntimeError(f"Failed to extract tag '{tag}' via git archive")
 
-        # 3. Read hand verdicts from tag
-        # Group results by 2-level group
+        # 3. Group results by 2-level group
         by_group: Dict[str, List[Dict[str, Any]]] = {}
         for _, r in results_data:
             grp = get_vamigats_group(r.get("retrosh_path", ""))
             by_group.setdefault(grp, []).append(r)
-
-        manual_verdicts_by_group: Dict[str, Dict[str, Tuple[str, str]]] = {}
-        for grp in by_group:
-            md_name = f"{grp.replace('/', '_')}.md"
-            try:
-                out = subprocess.check_output(
-                    ["git", "-C", str(results_path), "show", f"{tag}:{md_name}"],
-                    stderr=subprocess.DEVNULL,
-                ).decode("utf-8")
-                manual_verdicts_by_group[grp] = parse_manual_verdicts(out)
-            except subprocess.CalledProcessError:
-                manual_verdicts_by_group[grp] = {}
 
         # 4. Clean published content in working tree (filesystem only)
         # Identify top-level directories present in run (e.g. Agnus)
@@ -601,6 +548,7 @@ def publish(
 
         # 5. Populate variants in working tree
         render_tasks: List[Tuple[Path, Path, Path]] = []
+        render_keys: Dict[Path, str] = {}   # capture -> "<test dir>/<variant>"
         for rf, r in results_data:
             variant = r.get("variant", "")
             retrosh_path = r.get("retrosh_path", "")
@@ -633,34 +581,28 @@ def publish(
                 # names the .retrosh, so ambiguous variant names (timing1) resolve.
                 src_capture = vga_gz if vga_gz.is_file() else vga_raw
                 render_tasks.append((src_capture, dest_dir, old_dir if with_old else None))
+                render_keys[src_capture] = f"{test_dir_rel.as_posix()}/{variant}"
 
-        # Run side-by-side renders; a skipped image is an error, not a silent gap
+        # Run side-by-side renders; a skipped image is an error, not a silent gap. The
+        # outcome names the area of the differing pixels, which the report shows.
+        where: Dict[str, str] = {}
         if render_tasks:
             with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-                futures = [ex.submit(_render_worker, task) for task in render_tasks]
-                outcomes = [f.result() for f in concurrent.futures.as_completed(futures)]
+                futures = {ex.submit(_render_worker, task): task for task in render_tasks}
+                outcomes = []
+                for f in concurrent.futures.as_completed(futures):
+                    outcome = f.result()
+                    outcomes.append(outcome)
+                    where[render_keys[futures[f][0]]] = where_from_render(outcome)
             skipped = [o for o in outcomes if "skipped" in o]
             if skipped:
                 raise RuntimeError("side-by-side images skipped:\n" + "\n".join(skipped))
 
         # 6. Generate Group pages
-        group_agreements: Dict[str, Dict[str, int]] = {}
         for grp, r_list in by_group.items():
-            grp_manual = manual_verdicts_by_group.get(grp, {})
-
-            # Group variants by test_dir for agreement computation
-            variants_by_td: Dict[str, List[Dict[str, Any]]] = {}
-            for r in r_list:
-                td = str(Path(r.get("retrosh_path", "")).parent)
-                variants_by_td.setdefault(td, []).append(r)
-
-            agr = compute_agreement(grp_manual, variants_by_td)
-            group_agreements[grp] = agr
-
             md_content = generate_group_markdown(
                 group=grp,
                 results=r_list,
-                manual_verdicts=grp_manual,
                 nanomig_sha=nanomig_sha,
                 vamigats_sha=vamigats_sha,
             )
@@ -671,7 +613,7 @@ def publish(
         all_results_flat = [r for _, r in results_data]
         report_content = generate_test_report_markdown(
             results=all_results_flat,
-            group_agreements=group_agreements,
+            where=where,
             nanomig_sha=nanomig_sha,
             vamigats_sha=vamigats_sha,
             regression_sha=regression_sha,
@@ -698,7 +640,7 @@ def main() -> None:
     parser.add_argument(
         "--tag",
         default="manual-2024-08",
-        help="Git tag in results repo containing historical comparison (default: manual-2024-08)",
+        help="Git tag in the results repo with the old screenshots that --with-old adds (default: manual-2024-08)",
     )
     parser.add_argument(
         "--jobs",

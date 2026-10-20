@@ -85,7 +85,8 @@ sources touch one of them carry the label.
 - Python 3 with `numpy` and `opencv` (`apt install python3-numpy python3-opencv`).
 - **Kickstart 1.3** as `roms/kick13.rom`: the 512 KB image the published results
   were made with has SHA-1 `90933936cce43ca9bc6bf375662c076b27e3c458`
-  (`sha1sum roms/kick13.rom`). The harness accepts any image of 256 KB or more,
+  (`sha1sum roms/kick13.rom`; every result records it as `kick_sha1`). The
+  harness accepts any image of 256 KB or more,
   so a different one does not stop it; every test would just fail. It is not
   part of this repository and must never be committed.
 
@@ -153,7 +154,9 @@ changed (a directory has two to six variants and takes 15 to 30 minutes with
 
 `vs_published` lists every variant that got **better** (a FAIL turned PASS, or
 fewer differing pixels) or **worse** (a PASS turned FAIL, more differing
-pixels, or an ERROR), and exits with status 1 if anything got worse.
+pixels, or an ERROR), and exits with status 1 if anything got worse. A FAIL
+with as many differing pixels as before but a different capture is listed as
+**moved**: the difference now sits elsewhere, so look at its image.
 
 Every result records the NanoMig commit it ran against, and `run_all` resumes
 by that commit. **Commit your change before the run:** with uncommitted

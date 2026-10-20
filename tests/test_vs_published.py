@@ -1,5 +1,6 @@
 """Unit tests for comparing a run with the published results."""
 
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -46,6 +47,25 @@ class TestCompareRun(unittest.TestCase):
             counts, changed, _ = compare_run(run, pub)
             self.assertEqual((counts["better"], counts["worse"]), (1, 1))
             self.assertIn(("worse", test_dir, "waitblt1_ecs", "FAIL 4 px -> FAIL 9 px", 5), changed)
+
+    def test_moved_difference(self):
+        """A FAIL with the same pixel count but another capture is reported as moved."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run, pub = Path(tmp) / "run", Path(tmp) / "pub"
+            test_dir = "Agnus/Copper/Wait/waitblt4"
+            for variant, mine, theirs in (("waitblt4_ocs", b"frame A", b"frame B"),
+                                          ("waitblt4_ecs", b"frame C", b"frame C")):
+                r = {"variant": variant, "retrosh_path": f"{test_dir}/{variant}.retrosh", "class": "FAIL",
+                     "differing_pixels": 4, "nanomig_sha": "a", "vamigats_sha": "v"}
+                (run / test_dir / variant).mkdir(parents=True)
+                (run / test_dir / variant / "result.json").write_text(json.dumps(r))
+                (run / test_dir / variant / f"{variant}.frame.vga.gz").write_bytes(gzip.compress(mine))
+                (pub / test_dir).mkdir(parents=True, exist_ok=True)
+                (pub / test_dir / f"{variant}.result.json").write_text(json.dumps(r))
+                (pub / test_dir / f"{variant}.frame.vga.gz").write_bytes(gzip.compress(theirs))
+            counts, changed, _ = compare_run(run, pub)
+            self.assertEqual((counts["moved"], counts["unchanged"], counts["worse"]), (1, 1, 0))
+            self.assertIn(("moved", test_dir, "waitblt4_ocs", "FAIL 4 px -> FAIL 4 px", 0), changed)
 
 
 if __name__ == "__main__":

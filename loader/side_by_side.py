@@ -4,8 +4,9 @@
     python3 -m loader.side_by_side <capture> [<capture> ...] --out DIR
 
 A capture is a <variant>.frame.vga or <variant>.frame.vga.gz written by the
-harness. The variant's .retrosh and reference .raw are looked up by name in
-external/vAmigaTS. The NanoMig panel shows the real captured pixels (cropped
+harness, in a run directory or in the results repository. The variant's
+.retrosh and reference .raw are found through the result file next to it, or
+else by name in external/vAmigaTS. The NanoMig panel shows the real captured pixels (cropped
 and de-scandoubled like the comparison does, no checkerboard). In the
 difference panel the reference is dimmed, pixels outside the compared area
 (the cutout) are tinted blue and differing pixels are red, compared at
@@ -50,7 +51,9 @@ def panel(img, label):
 
 def render(capture, out_dir, old_dir=None, save_original=False):
     variant = capture.name.split(".frame.vga")[0]
-    result = capture.parent / "result.json"
+    result = capture.parent / "result.json"   # a run's layout
+    if not result.is_file():
+        result = capture.parent / f"{variant}.result.json"   # the results repository's
     if result.is_file():
         # names like timing1 exist in several groups - use the run's own path
         data = json.loads(result.read_text())

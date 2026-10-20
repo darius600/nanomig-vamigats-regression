@@ -3,7 +3,9 @@
 
 import argparse
 from datetime import datetime
+import functools
 import gzip
+import hashlib
 import json
 from pathlib import Path
 import resource
@@ -90,6 +92,17 @@ def this_machine() -> str:
     except Exception:
         pass
     return f"{model}, {len(cores) or '?'} cores"
+
+
+@functools.lru_cache(maxsize=None)
+def _sha1(path: str, size: int, mtime: float) -> str:
+    return hashlib.sha1(Path(path).read_bytes()).hexdigest()
+
+
+def file_sha1(path: Path) -> str:
+    """SHA-1 of a file such as the Kickstart image, which every result records."""
+    st = Path(path).stat()
+    return _sha1(str(Path(path).resolve()), st.st_size, st.st_mtime)
 
 
 def prepare_out_dir(out_path: Path) -> None:
@@ -295,6 +308,7 @@ def run_test(
         cmd += [a for t, kind, value in config.events for a in ("--event", f"{t},{kind},0x{value:02x}")]
         result["harness_args"] = harness_args_for(kick_rom, config)
         result["simulated_on"] = this_machine()
+        result["kick_sha1"] = file_sha1(kick_rom)
 
         try:
             proc = subprocess.run(

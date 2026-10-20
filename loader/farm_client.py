@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from loader.run_test import (
     REPO_ROOT,
     evaluate_capture,
+    file_sha1,
     harness_args_for,
     new_result,
     prepare_out_dir,
@@ -40,7 +41,7 @@ DEFAULT_URL = "http://127.0.0.1:8765"
 # unreachable, or no active worker, this long: simulate the rest here (shorter in tests)
 GIVE_UP_S = int(os.environ.get("VAMIGATS_FARM_GIVE_UP_S", "900"))
 POLL_S = 5
-PROGRESS_S = 1800    # a progress line in the log at least this often
+PROGRESS_S = 300     # a progress line in the log at least this often
 
 
 class Client:
@@ -109,6 +110,7 @@ def result_from(entry: Dict[str, Any], retrosh: Path, config: Any, out_path: Pat
                         entry.get("start") or now)
     result["harness_args"] = harness_args_for(kick_rom, config)
     result["simulated_on"] = entry["machine"]
+    result["kick_sha1"] = file_sha1(kick_rom)   # the worker got these very bytes
     result["simulated_by"] = entry["worker"]
     result["wall_time"] = round(float(entry["wall"]), 3)
     cpu_limit_s, timeout_s = simulation_limits(config)
@@ -180,7 +182,8 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
         return client.call("POST", "runs", spec, timeout=300)["run"]
 
     rid = submit(sorted(jobs))
-    print(f"farm run {rid}: {len(jobs)} jobs at {client.url}", flush=True)
+    print(f"farm run {rid}: {len(jobs)} jobs at {client.url}; progress every {PROGRESS_S // 60} min "
+          f"(--local simulates here instead)", flush=True)
     outstanding = set(jobs)
     cursor = 0
     trouble_since: Optional[float] = None   # server unreachable or no worker active since

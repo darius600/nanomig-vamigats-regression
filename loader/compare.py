@@ -126,29 +126,21 @@ def write_diff_image(
     diff_path: Path | str,
     captured: np.ndarray,
     ref: np.ndarray,
-    diff_mask: np.ndarray,
+    area: np.ndarray,
+    variant: str,
 ) -> None:
-    """Writes a diff image visualizing differences side by side.
-    
-    Row 1: Captured image
-    Row 2: Reference image
-    Row 3: Captured image with differing pixels highlighted in bright red.
-    """
+    """Writes the image of a FAIL as the published ones look: NanoMig | vAmigaTS
+    reference | differences, with titles, the vAmiga coordinates of the differing
+    pixels and rings around single pixels (drawn by loader.side_by_side)."""
+    # side_by_side imports this module, so import it here
+    from loader.side_by_side import GAP, H, LABEL_H, differences, panel
+
+    diff_panel, _ = differences(captured, ref, area, "differences")
+    sep = np.full((LABEL_H + H, GAP, 3), 64, np.uint8)
+    img = np.hstack([panel(captured, f"NanoMig  {variant}"), sep, panel(ref, "vAmigaTS reference"), sep, diff_panel])
     diff_path = Path(diff_path)
-    h, w, _ = captured.shape
-    canvas = np.zeros((h * 3 + 20, w, 3), dtype=np.uint8)
-
-    canvas[0:h] = captured
-    canvas[h + 10 : 2 * h + 10] = ref
-
-    highlighted = captured.copy()
-    highlighted[diff_mask] = [255, 0, 0]  # Red in RGB
-    canvas[2 * h + 20 :] = highlighted
-
-    # Convert RGB -> BGR for OpenCV imwrite
-    bgr = cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR)
     diff_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(diff_path), bgr)
+    cv2.imwrite(str(diff_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
 
 def compare_frames(
@@ -206,7 +198,7 @@ def compare_frames(
         detail = f"{diff_count} differing pixels"
         if out_path:
             diff_png_path = out_path / f"{variant}_diff.png"
-            write_diff_image(diff_png_path, captured_img, ref_img, diff_mask)
+            write_diff_image(diff_png_path, captured_img, ref_img, mask, variant)
 
     # Reconstruct .raw in vAmiga format
     lut, known = load_color_table()

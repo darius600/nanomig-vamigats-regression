@@ -3,7 +3,8 @@
 
     python3 -m loader.recompare runs/<name> [--class NOT_CALIBRATED ...]
 
-For every result.json of the given classes (default NOT_CALIBRATED) whose
+For every result of the given classes (default NOT_CALIBRATED; a run's
+result.json or the results repository's <variant>.result.json) whose
 capture (<variant>.frame.vga.gz) is next to it, the capture is cropped and
 compared again with the current comparison code, exactly as run_test does after
 a simulation. Class, detail, differing pixels and raw_status are replaced; the
@@ -33,10 +34,14 @@ def recompare(run_dir: Path, classes: Iterable[str]) -> List[Dict[str, Any]]:
     """Recompares the matching results in run_dir; returns (old class, new result) pairs."""
     changed = []
     regression_sha = get_git_revision(REPO_ROOT)
-    for f in sorted(run_dir.rglob("result.json")):
+    # a run keeps <variant>/result.json, the results repository <variant>.result.json
+    files = sorted(set(run_dir.rglob("result.json")) | set(run_dir.rglob("*.result.json")))
+    matching = 0
+    for f in files:
         r = json.loads(f.read_text(encoding="utf-8"))
         if r.get("class") not in classes:
             continue
+        matching += 1
         capture = f.parent / f"{r['variant']}.frame.vga.gz"
         if not capture.is_file():
             print(f"{r['variant']}: no stored capture, left as {r['class']}")
@@ -48,6 +53,8 @@ def recompare(run_dir: Path, classes: Iterable[str]) -> List[Dict[str, Any]]:
         f.write_text(json.dumps(r, indent=2), encoding="utf-8")
         print(f"{r['variant']}: {old_class} -> {r['class']} ({r['detail']})")
         changed.append((old_class, r))
+    if not matching:
+        print(f"{len(files)} results in {run_dir}, none of class {', '.join(classes)}")
     return changed
 
 

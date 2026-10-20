@@ -2,6 +2,7 @@
 """Report aggregation and formatting for NanoMig vAmigaTS regression runs."""
 
 from datetime import datetime
+import os
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -181,8 +182,9 @@ def build_report_data(
     }
 
 
-def generate_report_markdown(data: Dict[str, Any]) -> str:
-    """Generates markdown report content from structured report data."""
+def generate_report_markdown(data: Dict[str, Any], report_dir: Optional[Path] = None) -> str:
+    """Generates markdown report content from structured report data. With report_dir
+    (where report.md goes) the failures link their images."""
     subtrees_str = ", ".join(f"`{s}`" for s in data["subtrees"])
     summary = data["summary"]
     ecs = data["denise_ecs_sensitive"]
@@ -230,11 +232,16 @@ def generate_report_markdown(data: Dict[str, Any]) -> str:
     if not data["failures"]:
         lines.append("*None*")
     else:
-        lines.append("| Group | Variant | Differing Pixels | Diff Image |")
+        lines.append("| Group | Variant | Differing Pixels | Image |")
         lines.append("|---|---|---|---|")
         for f in data["failures"]:
-            diff_img = f["diff_image"] or "N/A"
-            lines.append(f"| {f['group']} | {f['variant']} | {f['differing_pixels']} | `{diff_img}` |")
+            diff_img = f["diff_image"]
+            if diff_img and report_dir:
+                rel = os.path.relpath(REPO_ROOT / diff_img, report_dir)   # an absolute path stays absolute
+                cell = f"[{Path(diff_img).name}]({Path(rel).as_posix()})"
+            else:
+                cell = f"`{diff_img}`" if diff_img else "N/A"
+            lines.append(f"| {f['group']} | {f['variant']} | {f['differing_pixels']} | {cell} |")
 
     lines.append("")
     lines.append("## Deviating Configurations")
@@ -286,7 +293,7 @@ def write_reports(
         report_date=report_date,
     )
 
-    md_content = generate_report_markdown(data)
+    md_content = generate_report_markdown(data, report_dir=out_path)
     json_path = out_path / "report.json"
     md_path = out_path / "report.md"
 
