@@ -65,6 +65,7 @@ class TestPublish(unittest.TestCase):
 
         lines = md.splitlines()
         self.assertEqual(lines[0], "# Agnus/Copper")
+        self.assertIn("[TestReport.md](TestReport.md#how-to-read)", md)
         self.assertIn("https://github.com/MiSTle-Dev/NanoMig/commit/0f3d2fd", md)
         self.assertIn("e807e32", md)
         self.assertIn("**Compared:** 2 (PASS 1, FAIL 1) | **ERROR:** 0 | **Not compared:** 1", md)

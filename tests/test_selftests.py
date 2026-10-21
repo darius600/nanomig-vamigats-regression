@@ -202,11 +202,22 @@ class TestSelftests(unittest.TestCase):
         self.assertTrue(cfg7.runnable)
         self.assertEqual(cfg7.wait_s, 17.0)
         self.assertEqual(cfg7.events, [(9.0, "key", 40), (9.5, "key", 40 | 0x80)])
+        self.assertIn("keyboard-controller", cfg7.labels)
 
         # mouse: right button pressed after 16 s, released after 16.5 s
         cfg8 = parse_retrosh(TS / "Denise" / "Misc" / "ThirdParty" / "losso" / "bplcon_rmb2_OCS.retrosh")
         self.assertEqual(cfg8.wait_s, 18.0)
         self.assertEqual(cfg8.events, [(16.0, "mouse", 0x2), (16.5, "mouse", 0)])
+
+
+    def test_06_recorded_floppy_config_is_the_harness_one(self):
+        """6. Every result records floppy_config; it must be what harness.cpp sets."""
+        import re
+        from loader.run_test import HARNESS_FLOPPY_CONFIG
+
+        source = (REPO_ROOT / "harness" / "harness.cpp").read_text(encoding="utf-8")
+        values = re.findall(r"tb->floppy_config\s*=\s*(0x[0-9a-fA-F]+)\s*;", source)
+        self.assertEqual(values, [HARNESS_FLOPPY_CONFIG])
 
 
 if __name__ == "__main__":

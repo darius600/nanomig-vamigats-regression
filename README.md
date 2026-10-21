@@ -33,7 +33,12 @@ exactly that for NanoMig:
    (`harness/inputs_tb.py`); the NanoMig sources themselves are the same.
 2. **The test as vAmiga runs it.** `loader/retrosh.py` reads the script
    (configuration, ADF, wait time, screenshot cutout) and maps it onto
-   NanoMig's configuration inputs.
+   NanoMig's configuration inputs. The other inputs are fixed in
+   `harness/harness.cpp`, as NanoMig's own `sim/nanomig_tb.cpp` sets them: two
+   floppy drives with NanoMig's floppy turbo, which also gives disk DMA the
+   refresh slots (`floppy_config = 0x5`; on the board, the menu's drive count
+   and turbo switch), no fast RAM, no IDE, a 68000 without CPU turbo. Every
+   result records `floppy_config`.
 3. **The frame.** The harness records NanoMig's VGA output. The comparison
    crops it to vAmiga's dump area (716 × 285) and undoes the scan doubling.
 4. **The comparison.** Pixels are compared at the Amiga's real colour depth,
@@ -54,14 +59,16 @@ is one of its `.retrosh` scripts, usually one per machine (`cross1_ocs`,
 |---|---|
 | `PASS` | identical to the reference inside the cutout |
 | `FAIL` | differs; `result.json` holds the number of differing pixels |
-| `DEVIATING_CONFIG` | the script asks for something NanoMig on a Tang Nano 20k cannot be configured to (for example a 68010, further floppy drives, a preset CPU register value); not simulated |
+| `DEVIATING_CONFIG` | the script asks for something this harness does not set NanoMig up for (for example a 68010, a drive beyond the two it connects, a preset CPU register value); not simulated |
 | `NOT_CALIBRATED` | the frame's raster geometry has no verified crop yet (the ERSY test's 908 × 627); simulated, not compared |
 | `NO_REFERENCE` | vAmigaTS ships no reference `.raw` for this variant; not simulated. 13 scripts at the pinned commit have none; one of them, the unnamed leftover `CPU/IPL/TAS/TAS1/.retrosh`, also asks for a 68010 and counts as `DEVIATING_CONFIG` |
 | `ERROR` | the simulation itself failed or timed out |
 
 Labels never change a class. `reference-contradicts-photo` marks the variants whose vAmigaTS
-hardware photo shows something else than the reference (see docs/REFERENCES.md).
-`denise-ecs-sensitive` is a label, too. vAmiga's `A500_ECS_1MB` is an
+hardware photo shows something else than the reference (see docs/REFERENCES.md); it puts the
+reference in doubt, it does not explain a FAIL. `keyboard-controller` marks a test of the
+keyboard's own controller (handshake, resync), which NanoMig does not have: its key codes come
+from the USB/HID path, where the harness feeds them. `denise-ecs-sensitive` is a label, too. vAmiga's `A500_ECS_1MB` is an
 ECS Agnus with an OCS Denise, as in the A500 rev. 6A. NanoMig has one ECS
 switch for both chips, so its ECS mode also enables the ECS-only Denise
 features (KILLEHB, DIWHIGH, DENISEID, SuperHires, BRDRBLNK). Tests whose
@@ -85,8 +92,8 @@ sources touch one of them carry the label.
 - Python 3 with `numpy` and `opencv` (`apt install python3-numpy python3-opencv`).
 - **Kickstart 1.3** as `roms/kick13.rom`: the 512 KB image the published results
   were made with has SHA-1 `90933936cce43ca9bc6bf375662c076b27e3c458`
-  (`sha1sum roms/kick13.rom`; every result records it as `kick_sha1`). The
-  harness accepts any image of 256 KB or more,
+  (`sha1sum roms/kick13.rom`; results made since 20 October 2026 record it as
+  `kick_sha1`). The harness accepts any image of 256 KB or more,
   so a different one does not stop it; every test would just fail. It is not
   part of this repository and must never be committed.
 

@@ -57,6 +57,14 @@ REFERENCE_CONTRADICTS_PHOTO = (
 )
 
 
+# Tests of the keyboard's own controller (the handshake from the CPU, and the resync the
+# keyboard starts when it is missing). NanoMig has no such controller: its key codes come
+# from the USB/HID path, where the harness feeds them. The label never changes PASS/FAIL.
+KEYBOARD_CONTROLLER = (
+    "Mainboard/Ports/Keyboard/noack1/noack1.retrosh",
+)
+
+
 def parse_retrosh(path: Path | str) -> RunConfig:
     """Parses a .retrosh file into a RunConfig.
 
@@ -214,6 +222,8 @@ def parse_retrosh(path: Path | str) -> RunConfig:
 
     if any(path.as_posix().endswith(p) for p in REFERENCE_CONTRADICTS_PHOTO):
         labels.append("reference-contradicts-photo")
+    if any(path.as_posix().endswith(p) for p in KEYBOARD_CONTROLLER):
+        labels.append("keyboard-controller")
 
     return RunConfig(
         variant=variant,

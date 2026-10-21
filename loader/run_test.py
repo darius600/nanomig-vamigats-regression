@@ -27,6 +27,9 @@ from loader.mask import build_mask
 from loader.retrosh import parse_retrosh
 
 BUILD_PROFILE = "tang_nano_20k"
+# What harness/harness.cpp sets NanoMig's floppy_config to (two drives with floppy turbo,
+# as NanoMig's sim/nanomig_tb.cpp); recorded in every result, checked by the selftests
+HARNESS_FLOPPY_CONFIG = "0x5"
 
 
 def to_repo_rel(path_val: Path | str | None) -> Optional[str]:
@@ -309,6 +312,7 @@ def run_test(
         result["harness_args"] = harness_args_for(kick_rom, config)
         result["simulated_on"] = this_machine()
         result["kick_sha1"] = file_sha1(kick_rom)
+        result["floppy_config"] = HARNESS_FLOPPY_CONFIG
 
         try:
             proc = subprocess.run(

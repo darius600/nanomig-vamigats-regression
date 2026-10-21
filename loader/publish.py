@@ -149,6 +149,9 @@ def generate_group_markdown(
         f"- **NanoMig:** [{nanomig_sha}]({NANOMIG_URL}/commit/{nanomig_sha}) | "
         f"**vAmigaTS:** [{vamigats_sha}]({VAMIGATS_URL}/commit/{vamigats_sha})",
         status,
+        "- **How to read:** a PASS is identical to vAmiga's screenshot of the test, not to a photo of real "
+        "hardware; classes and labels are explained in [TestReport.md](TestReport.md#how-to-read), the "
+        "references in [REFERENCES.md](REFERENCES.md).",
         "",
     ]
 
@@ -349,7 +352,10 @@ def generate_test_report_markdown(
         "OCS Denise, NanoMig's ECS mode an ECS Denise. Where the test also has an `_plus` variant (A500+, ECS "
         "Denise on both sides), that variant is the like-for-like comparison: a FAIL it shares is not explained "
         "by the label. `reference-contradicts-photo`: the vAmigaTS hardware photo of this test shows something "
-        "else than the reference.",
+        "else than the reference; it puts the reference in doubt but does not explain a FAIL (see "
+        "[REFERENCES.md](REFERENCES.md)). `keyboard-controller`: the test checks the keyboard's own controller "
+        "(handshake, resync), which NanoMig does not have; its key codes come from the USB/HID path, where the "
+        "harness feeds them.",
         "- **Image titles** give positions in vAmiga's coordinates (x 196–911, y 26–310); in the 716 × 285 "
         "panels, subtract 196 from x and 26 from y.",
         *(["- **Several machines** simulated this run (see *Simulated on*, and `simulated_on` in each "

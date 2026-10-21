@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds the NanoMig regression harness against external/NanoMig.
-# Tang Nano 20k profile: fx68k unpatched with --no-assert, defines INFER_DPRAM DISABLE_ROM_LOADER.
+# fx68k unpatched with --no-assert; defines INFER_DPRAM (as NanoMig's sim/Makefile does) and
+# DISABLE_ROM_LOADER (as the Tang Nano 20k top, src/tang/nano20k/top.sv, does).
 # HARNESS_INPUTS=1 builds the input harness (default dir build-inputs) for the tests that
 # use joystick, mouse or keyboard: same sources, but a copy of sim/nanomig_tb.v whose
 # input ports the harness drives (harness/inputs_tb.py).
@@ -32,7 +33,7 @@ cd "$BUILD_DIR"
 # Copy fx68k microcode tables into build directory for simulation runtime
 cp "$NANOMIG_DIR"/src/fx68k/*.mem "$BUILD_DIR/"
 
-DEFINES="-DINFER_DPRAM -DDISABLE_ROM_LOADER"   # Tang Nano 20k profile: fx68k, no cache
+DEFINES="-DINFER_DPRAM -DDISABLE_ROM_LOADER"   # sim/Makefile and nano20k/top.sv, see above
 M="$NANOMIG_DIR/src/minimig-aga"
 MINIMIG="$NANOMIG_DIR/src/nanomig.v $M/amiga_clk.v $M/cpu_wrapper.v $M/cpu_cache_new.v $M/dpram.v $M/dpram_be_1024x16.v $M/minimig.v \
  $M/bitplane_ram.v $M/sprite_ram.v \

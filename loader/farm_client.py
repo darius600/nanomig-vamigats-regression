@@ -29,6 +29,7 @@ from loader.run_test import (
     REPO_ROOT,
     evaluate_capture,
     file_sha1,
+    HARNESS_FLOPPY_CONFIG,
     harness_args_for,
     new_result,
     prepare_out_dir,
@@ -111,6 +112,7 @@ def result_from(entry: Dict[str, Any], retrosh: Path, config: Any, out_path: Pat
     result["harness_args"] = harness_args_for(kick_rom, config)
     result["simulated_on"] = entry["machine"]
     result["kick_sha1"] = file_sha1(kick_rom)   # the worker got these very bytes
+    result["floppy_config"] = HARNESS_FLOPPY_CONFIG
     result["simulated_by"] = entry["worker"]
     result["wall_time"] = round(float(entry["wall"]), 3)
     cpu_limit_s, timeout_s = simulation_limits(config)
