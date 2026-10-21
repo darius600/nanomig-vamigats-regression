@@ -421,6 +421,11 @@ def generate_readme_markdown() -> str:
         "Its README shows how to run one test or a group, also against your own NanoMig checkout, and how to "
         "compare that run with these results (`loader.vs_published`).",
         "",
+        "## License",
+        "",
+        "GPL-3.0-or-later, see [LICENSE](LICENSE). The reference panels in the images and the references "
+        "they show come from vAmigaTS, which is under GPL-3.0.",
+        "",
     ]
     return "\n".join(lines)
 
@@ -634,6 +639,7 @@ def publish(
         readme_content = generate_readme_markdown()
         (results_path / "README.md").write_text(readme_content, encoding="utf-8")
         shutil.copyfile(REPO_ROOT / "docs" / "REFERENCES.md", results_path / "REFERENCES.md")
+        shutil.copyfile(REPO_ROOT / "LICENSE", results_path / "LICENSE")
 
 
 def main() -> None:

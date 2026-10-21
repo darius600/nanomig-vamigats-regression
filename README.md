@@ -244,3 +244,9 @@ vAmigaTS.
   companion, which the simulation does not have, so a UART test sending more
   than 16 bytes would stall. NanoMig's own `sim/Makefile` leaves it undefined
   too.
+
+## License
+
+GPL-3.0-or-later, see [LICENSE](LICENSE). The two submodules keep their own
+terms: vAmigaTS is under GPL-3.0, and NanoMig's Minimig chip set sources carry
+GPL headers.
