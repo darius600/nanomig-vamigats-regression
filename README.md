@@ -139,7 +139,8 @@ run waits instead of overloading the cores.
 If a job queue that spreads simulations over several machines answers at
 `http://127.0.0.1:8765` (nanomig-vamigats-farm, a separate project; or
 `$VAMIGATS_FARM_URL`, `--queue URL`), `run_all` hands its simulations to it and
-compares the returned captures here as usual; `--local` simulates here anyway.
+compares the returned captures here as usual; `--local` simulates here anyway,
+and `--allow-offline` lets its workers take the run into offline batches.
 Without such a server, the normal case, `run_all` simulates itself.
 
 ## Testing a change to NanoMig

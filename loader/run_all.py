@@ -146,6 +146,12 @@ def main() -> None:
         default=1,
         help="nanomig-vamigats-farm priority: 1 (default); 2 only gets workers when nothing of priority 1 waits.",
     )
+    parser.add_argument(
+        "--allow-offline",
+        action="store_true",
+        help="let nanomig-vamigats-farm workers take this run's jobs into offline batches; such jobs "
+             "come back only when that machine is back (up to twice the hours of its batch).",
+    )
     args = parser.parse_args()
 
     t_start = time.time()
@@ -267,6 +273,7 @@ def main() -> None:
                 results_map,
                 harness=args.harness,
                 inputs_harness=args.harness_inputs,
+                offline_ok=args.allow_offline,
                 kick_rom=REPO_ROOT / "roms" / "kick13.rom",
                 shas={"nanomig": nanomig_sha, "vamigats": vamigats_sha, "regression": regression_sha},
                 label=" ".join(args.subtrees),

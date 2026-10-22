@@ -137,7 +137,7 @@ def result_from(entry: Dict[str, Any], retrosh: Path, config: Any, out_path: Pat
 def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[str, Dict[str, Any]], *,
              harness: Optional[str], kick_rom: Path, shas: Dict[str, str], label: str, owner: str,
              priority: int, report: Callable[[Dict[str, Any], Any], None],
-             inputs_harness: Optional[str] = None) -> List[Tuple[Path, Path, Any]]:
+             inputs_harness: Optional[str] = None, offline_ok: bool = False) -> List[Tuple[Path, Path, Any]]:
     """Simulates items [(retrosh, out dir, config)] through the queue, filling in results.
 
     Returns the items left undone when it gave up (see GIVE_UP_S); run_all simulates
@@ -178,7 +178,7 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
         wanted = sorted({s for j in ids for s in jobs[j]["files"].values()})
         for s in client.call("POST", "blobs/missing", {"shas": wanted})["missing"]:
             client.put_blob(s, paths[s].read_bytes())
-        spec = {"label": label, "owner": owner, "key": owner, "priority": priority,
+        spec = {"label": label, "owner": owner, "key": owner, "priority": priority, "offline_ok": offline_ok,
                 "jobs": [jobs[j] for j in ids]}
         return client.call("POST", "runs", spec, timeout=300)["run"]
 
