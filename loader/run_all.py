@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from loader import farm_client
 from loader.retrosh import parse_retrosh
-from loader.run_test import BUILD_PROFILE, get_git_revision, get_git_sha, run_test
+from loader.run_test import BUILD_PROFILE, get_git_revision, get_git_sha, run_test, select_harness
 from loader.report import write_reports
 
 VAMIGATS_ROOT = REPO_ROOT / "external" / "vAmigaTS"
@@ -109,6 +109,13 @@ def main() -> None:
         default=None,
         help="Harness binary to run (default: build/nanomig_harness). For experiments "
              "with a NanoMig checkout other than external/NanoMig.",
+    )
+    parser.add_argument(
+        "--harness-inputs",
+        default=None,
+        help="Input harness for the variants with joystick, mouse or keyboard input, built from the "
+             "same checkout with HARNESS_INPUTS=1 (default: build-inputs/; with --harness, "
+             "<its directory>-inputs if it exists). Without one these variants are not simulated.",
     )
     parser.add_argument(
         "--nanomig-dir",
@@ -228,6 +235,20 @@ def main() -> None:
             results_map[str(rf)] = res
             continue
 
+        # An input variant with a harness of one's own but no input harness: classified, not simulated
+        if select_harness(config, args.harness, args.harness_inputs) is None:
+            res = run_test(
+                rf,
+                out_dir=variant_out,
+                harness_path=args.harness,
+                nanomig_sha=nanomig_sha,
+                vamigats_sha=vamigats_sha,
+                regression_sha=regression_sha,
+            )
+            print(f"[{res['class']}] {config.variant}: {res.get('detail', '')}")
+            results_map[str(rf)] = res
+            continue
+
         # Runnable simulation candidate
         to_simulate.append((rf, variant_out, config))
 
@@ -245,6 +266,7 @@ def main() -> None:
                 to_simulate,
                 results_map,
                 harness=args.harness,
+                inputs_harness=args.harness_inputs,
                 kick_rom=REPO_ROOT / "roms" / "kick13.rom",
                 shas={"nanomig": nanomig_sha, "vamigats": vamigats_sha, "regression": regression_sha},
                 label=" ".join(args.subtrees),
@@ -266,6 +288,7 @@ def main() -> None:
                         rf,
                         var_out,
                         harness_path=args.harness,
+                        inputs_harness_path=args.harness_inputs,
                         nanomig_sha=nanomig_sha,
                         vamigats_sha=vamigats_sha,
                         regression_sha=regression_sha,

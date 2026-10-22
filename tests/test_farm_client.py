@@ -1,13 +1,14 @@
 """run_all through nanomig-vamigats-farm gives the same results as run_all simulating itself.
 
 Needs the nanomig-vamigats-farm repository next to this one and the stored captures
-of runs/control-4315acb and runs/full-4315acb-worker; skipped otherwise. A dummy
+of runs/control-4315acb and runs/full-4315acb; skipped otherwise. A dummy
 harness replays stored captures, so nothing is simulated (hence --no-lock).
 """
 import gzip
 import importlib
 import json
 import os
+import shutil
 from pathlib import Path
 import socket
 import subprocess
@@ -20,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 FARM = REPO_ROOT.parent / "nanomig-vamigats-farm"
 TS = REPO_ROOT / "external" / "vAmigaTS"
 CONTROL = REPO_ROOT / "runs" / "control-4315acb"
-WORKER_RUN = REPO_ROOT / "runs" / "full-4315acb-worker"
+FULL_RUN = REPO_ROOT / "runs" / "full-4315acb"
 
 # variant -> (retrosh, capture the dummy harness replays, exit code)
 CASES = {
@@ -32,7 +33,7 @@ CASES = {
     "dasdma1_ocs": ("Agnus/Copper/CopDma/dasdma1/dasdma1_ocs.retrosh", None, 3),
     # input events on the command line
     "joy0dat_1": ("Mainboard/Ports/JOYxDAT/joy0dat/joy0dat_1.retrosh",
-                  WORKER_RUN / "Mainboard/Ports/JOYxDAT/joy0dat/joy0dat_1", 0),
+                  FULL_RUN / "Mainboard/Ports/JOYxDAT/joy0dat/joy0dat_1", 0),
     # needs no simulation
     "addrerr1_68010": ("CPU/Exceptions/StackFrame/addrerr1/addrerr1_68010.retrosh", None, None),
 }
@@ -90,6 +91,9 @@ class TestRunAllThroughFarm(unittest.TestCase):
         self.harness = harness_dir / "nanomig_harness"
         self.harness.write_text(DUMMY % {"cases": json.dumps(cases), "log": str(self.log)})
         self.harness.chmod(0o755)
+        # the input harness next to it, as <directory>-inputs (the dummy takes --event either way)
+        self.inputs_dir = self.base / "harness-inputs"
+        shutil.copytree(harness_dir, self.inputs_dir)
         self.scripts = [str(TS / r) for r, _, _ in CASES.values()]
 
     def tearDown(self):
@@ -156,6 +160,21 @@ class TestRunAllThroughFarm(unittest.TestCase):
         # the harness was called the same way: arguments, ROM, ADF, .mem files
         self.assertEqual(queue_calls, local_calls)
         self.assertIn("--event", local_calls["joy0dat_1"][0]["tail"])
+
+    def test_input_variant_without_input_harness(self):
+        """With --harness but no input harness, an input variant is classified, not run as ERROR;
+        --harness-inputs names one explicitly."""
+        shutil.rmtree(self.inputs_dir)
+        out = self.base / "no-inputs"
+        self.run_all(out, "--local")
+        joy = self.results(out)["joy0dat_1"][0]
+        self.assertEqual(joy["class"], "DEVIATING_CONFIG")
+        self.assertIn("--harness-inputs", joy["detail"])
+        self.assertEqual(self.results(out)["cross1_ocs"][0]["class"], "PASS")   # the others still run
+
+        out2 = self.base / "explicit"
+        self.run_all(out2, "--local", "--harness-inputs", str(self.harness))
+        self.assertEqual(self.results(out2)["joy0dat_1"][0]["class"], "PASS")
 
     def test_busy_worker_is_not_taken_for_none(self):
         """A worker whose slots are all busy with another run does not ask the server until a

@@ -59,7 +59,7 @@ is one of its `.retrosh` scripts, usually one per machine (`cross1_ocs`,
 |---|---|
 | `PASS` | identical to the reference inside the cutout |
 | `FAIL` | differs; `result.json` holds the number of differing pixels |
-| `DEVIATING_CONFIG` | the script asks for something this harness does not set NanoMig up for (for example a 68010, a drive beyond the two it connects, a preset CPU register value); not simulated |
+| `DEVIATING_CONFIG` | the script asks for something this harness does not set NanoMig up for (for example a 68010, a drive beyond the two it connects, a preset CPU register value, or input when no input harness was given); not simulated |
 | `NOT_CALIBRATED` | the frame's raster geometry has no verified crop yet (the ERSY test's 908 × 627); simulated, not compared |
 | `NO_REFERENCE` | vAmigaTS ships no reference `.raw` for this variant; not simulated. 13 scripts at the pinned commit have none; one of them, the unnamed leftover `CPU/IPL/TAS/TAS1/.retrosh`, also asks for a 68010 and counts as `DEVIATING_CONFIG` |
 | `ERROR` | the simulation itself failed or timed out |
@@ -149,11 +149,17 @@ compare the outcome with the published results:
 
 ```sh
 NANOMIG_DIR=~/NanoMig harness/build.sh build-mine        # -> build-mine/nanomig_harness
+NANOMIG_DIR=~/NanoMig HARNESS_INPUTS=1 harness/build.sh build-mine-inputs   # for the input tests
 python3 -m loader.run_all Agnus/Copper --jobs 8 --out runs/mine-copper \
     --harness build-mine/nanomig_harness --nanomig-dir ~/NanoMig
 git clone https://github.com/darius600/nanomig-vamigats-results.git ../nanomig-vamigats-results
 python3 -m loader.vs_published runs/mine-copper ../nanomig-vamigats-results
 ```
+
+`run_all` takes the input harness from the directory next to `--harness` with
+`-inputs` appended (or from `--harness-inputs`). Without one, the 13 variants
+with joystick, mouse or keyboard input are not simulated and are reported as
+`DEVIATING_CONFIG`, not as failures.
 
 For a first check, run only the test directories that exercise what you
 changed (a directory has two to six variants and takes 15 to 30 minutes with

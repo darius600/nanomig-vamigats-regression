@@ -210,6 +210,33 @@ def evaluate_capture(
     return result
 
 
+INPUT_HARNESS_MISSING = ("input events need the input harness: build it from the same NanoMig "
+                         "checkout with HARNESS_INPUTS=1 and pass it with --harness-inputs "
+                         "(or put it next to --harness, in <its directory>-inputs)")
+
+
+def select_harness(config: Any, harness_path: Path | str | None = None,
+                   inputs_harness_path: Path | str | None = None) -> Optional[Path]:
+    """The harness a variant runs on, or None for an input variant without an input harness.
+
+    Scripts with joystick, mouse or keyboard input need the input harness
+    (HARNESS_INPUTS=1 harness/build.sh). Without --harness these are build/ and
+    build-inputs/. With --harness (a NanoMig checkout of one's own) the input harness is
+    --harness-inputs, else <the --harness directory>-inputs next to it if it exists;
+    otherwise there is none, and the variant is not simulated rather than run on a
+    harness that cannot take input.
+    """
+    if not config.events:
+        return Path(harness_path) if harness_path else REPO_ROOT / "build" / "nanomig_harness"
+    if inputs_harness_path:
+        return Path(inputs_harness_path)
+    if harness_path:
+        h = Path(harness_path)
+        sibling = h.parent.with_name(h.parent.name + "-inputs") / h.name
+        return sibling if sibling.is_file() else None
+    return REPO_ROOT / "build-inputs" / "nanomig_harness"
+
+
 def run_test(
     retrosh_path: Path | str,
     out_dir: Path | str | None = None,
@@ -218,6 +245,7 @@ def run_test(
     nanomig_sha: Optional[str] = None,
     vamigats_sha: Optional[str] = None,
     regression_sha: Optional[str] = None,
+    inputs_harness_path: Path | str | None = None,
 ) -> Dict[str, Any]:
     """Executes a single test script end-to-end and writes result.json.
     
@@ -260,10 +288,15 @@ def run_test(
         (out_path / "result.json").write_text(json.dumps(result, indent=2))
         return result
 
-    # Locate harness binary and ROM; scripts with joystick, mouse or keyboard input need
-    # the input harness (HARNESS_INPUTS=1 harness/build.sh)
-    default_dir = "build-inputs" if config.events else "build"
-    harness_bin = Path(harness_path) if harness_path else (REPO_ROOT / default_dir / "nanomig_harness")
+    # Locate harness binary and ROM (see select_harness)
+    harness_bin = select_harness(config, harness_path, inputs_harness_path)
+    if harness_bin is None:
+        # a harness of one's own was given, but no input harness: not simulated, not an ERROR
+        result["class"] = "DEVIATING_CONFIG"
+        result["detail"] = INPUT_HARNESS_MISSING
+        result["end_time"] = datetime.now().astimezone().isoformat()
+        (out_path / "result.json").write_text(json.dumps(result, indent=2))
+        return result
     if not harness_bin.is_file():
         result["detail"] = f"Harness binary not found at {harness_bin}"
         result["end_time"] = datetime.now().astimezone().isoformat()

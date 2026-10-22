@@ -34,6 +34,7 @@ from loader.run_test import (
     new_result,
     prepare_out_dir,
     run_test,
+    select_harness,
     simulation_limits,
 )
 
@@ -81,11 +82,6 @@ def connect(url: Optional[str] = None) -> Optional[Client]:
     if isinstance(hello, dict) and hello.get("service") == "nanomig-vamigats-farm" and hello.get("protocol") == PROTOCOL:
         return client
     return None
-
-
-def harness_for(harness: Optional[str], config: Any) -> Path:
-    """The harness run_test would run (input scripts need the input harness)."""
-    return Path(harness) if harness else REPO_ROOT / ("build-inputs" if config.events else "build") / "nanomig_harness"
 
 
 def job_for(jid: int, config: Any, harness_bin: Path, kick_rom: Path, sha: Callable[[Path], str]) -> Dict[str, Any]:
@@ -140,7 +136,8 @@ def result_from(entry: Dict[str, Any], retrosh: Path, config: Any, out_path: Pat
 
 def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[str, Dict[str, Any]], *,
              harness: Optional[str], kick_rom: Path, shas: Dict[str, str], label: str, owner: str,
-             priority: int, report: Callable[[Dict[str, Any], Any], None]) -> List[Tuple[Path, Path, Any]]:
+             priority: int, report: Callable[[Dict[str, Any], Any], None],
+             inputs_harness: Optional[str] = None) -> List[Tuple[Path, Path, Any]]:
     """Simulates items [(retrosh, out dir, config)] through the queue, filling in results.
 
     Returns the items left undone when it gave up (see GIVE_UP_S); run_all simulates
@@ -160,11 +157,13 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
     jobs: Dict[int, Dict[str, Any]] = {}
     todo: Dict[int, Tuple[Path, Path, Any]] = {}
     for rf, var_out, cfg in items:
-        harness_bin = harness_for(harness, cfg)
-        if not harness_bin.is_file() or not kick_rom.is_file() or not cfg.adf or not Path(cfg.adf).is_file():
-            # run_test reports the missing file without simulating
+        harness_bin = select_harness(cfg, harness, inputs_harness)
+        if harness_bin is None or not harness_bin.is_file() or not kick_rom.is_file() or not cfg.adf \
+                or not Path(cfg.adf).is_file():
+            # run_test classifies these without simulating (no input harness, a missing file)
             res = run_test(rf, var_out, harness_path=harness, nanomig_sha=shas["nanomig"],
-                           vamigats_sha=shas["vamigats"], regression_sha=shas["regression"])
+                           vamigats_sha=shas["vamigats"], regression_sha=shas["regression"],
+                           inputs_harness_path=inputs_harness)
             results[str(rf)] = res
             report(res, cfg)
             continue
