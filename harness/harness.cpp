@@ -11,6 +11,10 @@
 //   harness/inputs_tb.py): from simulated time t_s on, kind joy0 / joy1 / mouse sets
 //   the joystick or mouse button bits to value; kind key sends value as one keyboard
 //   byte (keycode, bit 7 set for a release).
+//   nanomig_harness --init-info prints the start state as JSON and exits: {"init": "zero"},
+//   or for an EXPERIMENTAL build with FPGA start values (HARNESS_INIT=<list> harness/build.sh,
+//   see loader/init_list.py) the list, how many of its bits were set and which names could
+//   not be resolved. Such a build sets the listed bits to 1 before the first evaluation.
 //
 // Output files:
 //   <out.frame>.vga: VGA-captured frame (width, height header + RGB payload); the
@@ -159,6 +163,80 @@ static void apply_events() {
 }
 #endif
 
+#ifdef HARNESS_INIT
+#include "init_list.h"
+
+struct InitMiss { const InitBit *e; const char *why; };
+static int init_set = 0;
+static std::vector<InitMiss> init_missed;
+
+// Sets one listed bit to 1, or says why it cannot
+static const char *set_init_bit(const InitBit &e) {
+  std::string scope = std::string("TOP.nanomig_tb.nanomig") + (e.path[0] ? "." : "") + e.path;
+  const VerilatedScope *s = Verilated::threadContextp()->scopeFind(scope.c_str());
+  if (!s) return "no such scope";
+  VerilatedVar *v = s->varFind(e.var);
+  if (!v) return "no such public variable";
+  if (v->udims() != 0 || v->pdims() > 1) return "array, not supported";
+  int pos = 0;
+  if (e.bit < 0) {
+    if (v->entBits() != 1) return "no bit given for a vector";
+  } else {
+    if (v->pdims() != 1) return "bit given for a one-bit register";
+    const VerilatedRange &r = v->packedRanges()[0];
+    if (e.bit < r.low() || e.bit > r.high()) return "bit out of range";
+    pos = r.left() >= r.right() ? e.bit - r.right() : r.right() - e.bit;
+  }
+  void *p = v->datap();
+  switch (v->vltype()) {
+    case VLVT_UINT8:  *(CData *)p |= (CData)(1u << pos); break;
+    case VLVT_UINT16: *(SData *)p |= (SData)(1u << pos); break;
+    case VLVT_UINT32: *(IData *)p |= 1u << pos; break;
+    case VLVT_UINT64: *(QData *)p |= 1ull << pos; break;
+    case VLVT_WDATA:  ((EData *)p)[pos / 32] |= 1u << (pos % 32); break;
+    default: return "type not supported";
+  }
+  return nullptr;
+}
+
+// The FPGA's start values: before the first eval, so that the reset acts on them as on the board
+static void apply_init() {
+  for (const InitBit &e : INIT_BITS) {
+    const char *why = set_init_bit(e);
+    if (why) init_missed.push_back({ &e, why }); else init_set++;
+  }
+}
+
+static void print_json_str(const char *s) {
+  putchar('"');
+  for (; *s; s++) {
+    if (*s == '"' || *s == '\\') putchar('\\');
+    putchar(*s);
+  }
+  putchar('"');
+}
+#endif
+
+static int init_info() {
+#ifdef HARNESS_INIT
+  printf("{\"init\": \"fpga (experimental)\", \"list\": "); print_json_str(INIT_LIST_NAME);
+  printf(", \"sha256\": "); print_json_str(INIT_LIST_SHA256);
+  printf(", \"nanomig\": "); print_json_str(INIT_LIST_NANOMIG);
+  printf(", \"gowin\": "); print_json_str(INIT_LIST_GOWIN);
+  printf(", \"bits\": %d, \"set\": %d, \"unresolved\": [", (int)(sizeof INIT_BITS / sizeof INIT_BITS[0]), init_set);
+  for (size_t i = 0; i < init_missed.size(); i++) {
+    const InitMiss &m = init_missed[i];
+    printf(i ? ", [" : "["); print_json_str(m.e->path); printf(", "); print_json_str(m.e->var);
+    if (m.e->bit < 0) printf(", \"-\", "); else printf(", \"%d\", ", m.e->bit);
+    print_json_str(m.why); printf("]");
+  }
+  printf("]}\n");
+#else
+  printf("{\"init\": \"zero\"}\n");
+#endif
+  return 0;
+}
+
 // One 28 MHz half period, same sequencing as NanoMig's sim/nanomig_tb.cpp
 static void tick(int c) {
 #ifdef HARNESS_INPUTS
@@ -202,7 +280,13 @@ int main(int argc, char **argv) {
 
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
-    if (arg == "--chipset" && i + 1 < argc) {
+    if (arg == "--init-info") {
+#ifdef HARNESS_INIT
+      tb = new Vnanomig_tb;   // resolves the names against the model, nothing is simulated
+      apply_init();
+#endif
+      return init_info();
+    } else if (arg == "--chipset" && i + 1 < argc) {
       chipset = (uint8_t)std::strtoul(argv[++i], nullptr, 0);
     } else if (arg.rfind("--chipset=", 0) == 0) {
       chipset = (uint8_t)std::strtoul(arg.c_str() + 10, nullptr, 0);
@@ -254,6 +338,13 @@ int main(int argc, char **argv) {
   p_vbl   = (uint8_t *)sig("TOP.nanomig_tb.nanomig", "vbl");
   p_hpos  = (uint16_t *)sig("TOP.nanomig_tb.nanomig.minimig.AGNUS1.bc1", "hpos");
   p_vpos  = (uint16_t *)sig("TOP.nanomig_tb.nanomig.minimig.AGNUS1.bc1", "vpos");
+#ifdef HARNESS_INIT
+  apply_init();
+  printf("init fpga (experimental): %s (sha256 %.12s), %d of %d bits set to 1\n", INIT_LIST_NAME,
+         INIT_LIST_SHA256, init_set, (int)(sizeof INIT_BITS / sizeof INIT_BITS[0]));
+  for (const InitMiss &m : init_missed)
+    printf("init: not set: %s %s %d: %s\n", m.e->path[0] ? m.e->path : "(core)", m.e->var, m.e->bit, m.why);
+#endif
 
   sd_init();
   tb->por = 1;

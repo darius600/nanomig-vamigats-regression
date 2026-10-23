@@ -5,11 +5,18 @@
 # HARNESS_INPUTS=1 builds the input harness (default dir build-inputs) for the tests that
 # use joystick, mouse or keyboard: same sources, but a copy of sim/nanomig_tb.v whose
 # input ports the harness drives (harness/inputs_tb.py).
+# HARNESS_INIT=<list.tsv> (EXPERIMENTAL) builds a harness that starts from the FPGA's start
+# values instead of all zeros: the list (made from the Gowin netlist of exactly this NanoMig
+# commit) is compiled in, see loader/init_list.py. Combines with HARNESS_INPUTS=1.
 set -e
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 NANOMIG_DIR="${NANOMIG_DIR:-$REPO_ROOT/external/NanoMig}"
+INIT_LIST=""
+if [ -n "$HARNESS_INIT" ]; then
+    INIT_LIST=$(realpath "$HARNESS_INIT")
+fi
 
 # Resolve target build directory: the argument, else build/ (build-inputs/) in the repository,
 # wherever the script is called from
@@ -56,10 +63,26 @@ fi
 HDL="$TB $NANOMIG_DIR/sim/sdr_chip_model.v $MINIMIG $FX $MISC $NANOMIG_DIR/sim/TG68KdotC_Kernel.v"
 
 VLT="$SCRIPT_DIR/taps.vlt"
+VFLAGS="$DEFINES -Wno-fatal -Wno-BLKANDNBLK -Wno-lint -Wno-style --no-timing --no-assert \
+  -I$NANOMIG_DIR/sim -I$NANOMIG_DIR/src/fx68k -top-module nanomig_tb"
 
-verilator -O3 $DEFINES -Wno-fatal -Wno-BLKANDNBLK -Wno-lint -Wno-style --no-timing --no-assert --threads 1 \
-  -I"$NANOMIG_DIR"/sim -I"$NANOMIG_DIR"/src/fx68k \
-  -top-module nanomig_tb -cc $HDL "$VLT" \
+if [ -n "$INIT_LIST" ]; then
+    # The list must come from this commit's netlist; the design's hierarchy says which module
+    # each listed instance is, so that only the listed registers become public
+    PYTHONPATH="$REPO_ROOT" python3 -m loader.init_list check "$INIT_LIST" "$NANOMIG_DIR"
+    rm -rf "$BUILD_DIR/init"
+    mkdir -p "$BUILD_DIR/init"
+    cp "$INIT_LIST" "$BUILD_DIR/init/"
+    verilator --json-only $VFLAGS $HDL --Mdir "$BUILD_DIR/init/json" > "$BUILD_DIR/init/json.log" 2>&1 \
+        || { tail -30 "$BUILD_DIR/init/json.log"; exit 1; }
+    PYTHONPATH="$REPO_ROOT" python3 -m loader.init_list generate "$INIT_LIST" \
+        "$BUILD_DIR/init/json/Vnanomig_tb.tree.json" "$BUILD_DIR/init"
+    rm -rf "$BUILD_DIR/init/json"
+    VLT="$VLT $BUILD_DIR/init/init.vlt"
+    CDEFINES="$CDEFINES -DHARNESS_INIT -I$BUILD_DIR/init"
+fi
+
+verilator -O3 $VFLAGS --threads 1 -cc $HDL $VLT \
   --exe "$SCRIPT_DIR/harness.cpp" "$NANOMIG_DIR"/sim/sd_card.cpp \
   -o ../nanomig_harness -CFLAGS "-I$NANOMIG_DIR/sim $DEFINES $CDEFINES ${HARNESS_OPT:--O2}" \
   --Mdir "$BUILD_DIR/obj_dir" > "$BUILD_DIR/verilator.log" 2>&1 || { tail -30 "$BUILD_DIR/verilator.log"; exit 1; }

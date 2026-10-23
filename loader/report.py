@@ -82,8 +82,10 @@ def build_report_data(
     build_profile: str,
     wall_time: float,
     report_date: Optional[str] = None,
+    init: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Aggregates test results into structured report data."""
+    """Aggregates test results into structured report data. init: the start state of an
+    EXPERIMENTAL fpga run (run_all.start_state); a normal run has none."""
     if report_date is None:
         report_date = datetime.now().astimezone().isoformat()
 
@@ -179,6 +181,7 @@ def build_report_data(
         "failures": failures,
         "deviating_config": deviating_config,
         "not_calibrated": not_calibrated,
+        **({"init": init} if init and init.get("init") != "zero" else {}),
     }
 
 
@@ -198,6 +201,15 @@ def generate_report_markdown(data: Dict[str, Any], report_dir: Optional[Path] = 
         f"- **Build Profile:** `{data['build_profile']}`",
         f"- **Subtrees:** {subtrees_str}",
         f"- **Wall Time:** {data['wall_time']:.2f}s",
+    ]
+    if data.get("init"):
+        il = data["init"]["init_list"]
+        lines.append(f"- **Start state:** {data['init']['init']}: `{il['name']}` (sha256 `{il['sha256'][:12]}`, "
+                     f"NanoMig `{il['nanomig']}`, Gowin {il['gowin'] or '?'}), {il['set']} of {il['bits']} bits "
+                     f"set to 1. Not comparable with runs that start from zero; never published.")
+        for inst, reg, bit, why in il.get("unresolved") or []:
+            lines.append(f"  - not set: `{inst or '(core)'}` `{reg}` {bit}: {why}")
+    lines += [
         "",
         "## Summary",
         "",
@@ -278,6 +290,7 @@ def write_reports(
     build_profile: str,
     wall_time: float,
     report_date: Optional[str] = None,
+    init: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Path, Path]:
     """Generates and writes report.md and report.json to out_dir."""
     out_path = Path(out_dir).resolve()
@@ -291,6 +304,7 @@ def write_reports(
         build_profile=build_profile,
         wall_time=wall_time,
         report_date=report_date,
+        init=init,
     )
 
     md_content = generate_report_markdown(data, report_dir=out_path)

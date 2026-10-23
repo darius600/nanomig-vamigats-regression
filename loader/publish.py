@@ -433,8 +433,10 @@ def generate_readme_markdown() -> str:
 def check_publishable(results: List[Tuple[Path, Dict[str, Any]]]) -> None:
     """Only normal runs of a committed NanoMig checkout are published. Results of
     experimental modes carry a marker (zygote_fork_at_s from the experimental/zygote
-    branch, test_wait_s from a shortened test run) and are refused."""
-    marked = [str(rf) for rf, r in results if "zygote_fork_at_s" in r or "test_wait_s" in r]
+    branch, test_wait_s from a shortened test run, init from run_all --init fpga) and
+    are refused."""
+    marked = [str(rf) for rf, r in results
+              if "zygote_fork_at_s" in r or "test_wait_s" in r or r.get("init", "zero") != "zero"]
     dirty = [str(rf) for rf, r in results if str(r.get("nanomig_sha", "")).endswith("-dirty")]
     problems = []
     if marked:

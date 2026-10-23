@@ -10,13 +10,14 @@ import os
 from pathlib import Path
 import sys
 import time
-from typing import Any, Dict, List, Set, Tuple
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from loader import farm_client
+from loader import farm_client, init_list
 from loader.retrosh import parse_retrosh
 from loader.run_test import BUILD_PROFILE, get_git_revision, get_git_sha, run_test, select_harness
 from loader.report import write_reports
@@ -76,6 +77,62 @@ def collect_retrosh_files(subtrees: List[str]) -> List[Path]:
                 collected.add(p)
 
     return sorted(collected)
+
+
+def start_state(init_arg: str, nanomig_sha: str, harnesses: List[Path]) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """(fields every result records, report entry) for --init; exits when the list, the
+    checkout and the harnesses do not belong together.
+
+    zero: Verilator's all-zero start, as always; a harness built with an init list is refused.
+    fpga:<list>: EXPERIMENTAL, see loader/init_list.py; every harness must have been built
+    with exactly this list, and the list must come from the NanoMig commit being run."""
+    infos = {h: init_list.harness_info(h) for h in harnesses if h.is_file()}
+    if init_arg == "zero":
+        built = [h for h, i in infos.items() if i.get("init") != "zero"]
+        if built:
+            sys.exit(f"{built[0]} was built with an FPGA init list ({infos[built[0]].get('list')}): "
+                     f"pass --init fpga:<that list>, or use a harness built without HARNESS_INIT")
+        return None, {"init": "zero"}
+    if not init_arg.startswith("fpga:"):
+        sys.exit(f"--init {init_arg}: expected zero or fpga:<list>")
+    try:
+        lst = init_list.parse(init_arg[len("fpga:"):])
+    except (OSError, ValueError) as e:
+        sys.exit(f"--init: {e}")
+    problem = init_list.nanomig_mismatch(lst, nanomig_sha)
+    if problem:
+        sys.exit(f"--init: {problem}")
+    if not infos:
+        sys.exit(f"--init: no harness found ({', '.join(str(h) for h in harnesses)})")
+    for h, info in infos.items():
+        if info.get("sha256") != lst.sha256:
+            sys.exit(f"--init: {h} was not built with {lst.path.name}: "
+                     f"HARNESS_INIT={lst.path} NANOMIG_DIR=<checkout> harness/build.sh <dir>")
+    info = next(iter(infos.values()))
+    fields = init_list.result_fields(lst, info)
+    print(f"Start state: {init_list.FPGA_LABEL} from {lst.path.name} (sha256 {lst.sha256[:12]}, "
+          f"NanoMig {lst.nanomig}, Gowin {lst.gowin or '?'}): {info.get('set')} of {len(lst.entries)} bits set")
+    for inst, reg, bit, why in info.get("unresolved") or []:
+        print(f"  not set: {inst or '(core)'} {reg} {bit}: {why}")
+    return fields, {**fields, "init_list": {**fields["init_list"], "unresolved": info.get("unresolved") or []}}
+
+
+INIT_MARKER = "init.json"   # in an --out of an EXPERIMENTAL fpga run; normal runs have none
+
+
+def claim_out_dir(out_dir: Path, fields: Optional[Dict[str, Any]]) -> None:
+    """Results from different start states never share an --out: exits if this one holds
+    results of another, and marks it for an fpga run."""
+    marker = out_dir / INIT_MARKER
+    here = init_list.signature(json.loads(marker.read_text())) if marker.is_file() else ("zero", None)
+    want = init_list.signature(fields or {})
+    if here == ("zero", None) and want != here and next(out_dir.rglob("result.json"), None) is None:
+        here = want   # an empty --out takes any start state
+    if here != want:
+        sys.exit(f"{out_dir} holds results simulated from start state {init_list.describe(here)}, this run "
+                 f"starts from {init_list.describe(want)}: use another --out")
+    if fields:
+        marker.write_text(json.dumps(fields, indent=2))
 
 
 def main() -> None:
@@ -152,6 +209,15 @@ def main() -> None:
         help="let nanomig-vamigats-farm workers take this run's jobs into offline batches; such jobs "
              "come back only when that machine is back (up to twice the hours of its batch).",
     )
+    parser.add_argument(
+        "--init",
+        default="zero",
+        metavar="zero|fpga:LIST",
+        help="start state of the registers: zero (default, Verilator's) or, EXPERIMENTAL, fpga:<list> "
+             "with the start values of the Gowin netlist of this NanoMig commit (see loader/init_list.py); "
+             "needs a harness built with HARNESS_INIT=<list>. Such results are never mixed with others "
+             "in one --out and never published.",
+    )
     args = parser.parse_args()
 
     t_start = time.time()
@@ -168,6 +234,11 @@ def main() -> None:
               f"{nanomig_sha} and every variant is simulated again; commit the change "
               f"to make a run resumable.", file=sys.stderr)
 
+    harnesses = [select_harness(SimpleNamespace(events=events), args.harness, args.harness_inputs)
+                 for events in ([], [(0.0, "key", 0)])]
+    init_fields, init_report = start_state(args.init, nanomig_sha, [h for h in harnesses if h])
+    claim_out_dir(out_dir, init_fields)
+
     retrosh_files = collect_retrosh_files(args.subtrees)
     if not retrosh_files:
         print("No .retrosh test files found in given subtrees.", file=sys.stderr)
@@ -179,6 +250,7 @@ def main() -> None:
             vamigats_sha=vamigats_sha,
             build_profile=BUILD_PROFILE,
             wall_time=0.0,
+            init=init_report,
         )
         return
 
@@ -218,6 +290,7 @@ def main() -> None:
                     # a variant that could not be simulated before but can now (e.g. input
                     # tests) is simulated, and one that no longer can is classified again
                     and (cached.get("class") == "DEVIATING_CONFIG") == (not config.runnable)
+                    and init_list.signature(cached) == init_list.signature(init_fields or {})
                 ):
                     can_resume = True
             except Exception:
@@ -236,6 +309,7 @@ def main() -> None:
                 nanomig_sha=nanomig_sha,
                 vamigats_sha=vamigats_sha,
                 regression_sha=regression_sha,
+                init=init_fields,
             )
             print(f"[{res['class']}] {config.variant}: {res.get('detail', '')}")
             results_map[str(rf)] = res
@@ -250,6 +324,7 @@ def main() -> None:
                 nanomig_sha=nanomig_sha,
                 vamigats_sha=vamigats_sha,
                 regression_sha=regression_sha,
+                init=init_fields,
             )
             print(f"[{res['class']}] {config.variant}: {res.get('detail', '')}")
             results_map[str(rf)] = res
@@ -274,6 +349,7 @@ def main() -> None:
                 harness=args.harness,
                 inputs_harness=args.harness_inputs,
                 offline_ok=args.allow_offline,
+                init=init_fields,
                 kick_rom=REPO_ROOT / "roms" / "kick13.rom",
                 shas={"nanomig": nanomig_sha, "vamigats": vamigats_sha, "regression": regression_sha},
                 label=" ".join(args.subtrees),
@@ -299,6 +375,7 @@ def main() -> None:
                         nanomig_sha=nanomig_sha,
                         vamigats_sha=vamigats_sha,
                         regression_sha=regression_sha,
+                        init=init_fields,
                     ): (rf, var_out, cfg)
                     for (rf, var_out, cfg) in to_simulate
                 }
@@ -328,6 +405,7 @@ def main() -> None:
                             "wall_time": 0.0,
                             "differing_pixels": None,
                             "raw_status": None,
+                            **(init_fields or {}),
                         }
                         var_out.mkdir(parents=True, exist_ok=True)
                         (var_out / "result.json").write_text(json.dumps(err_res, indent=2))
@@ -346,6 +424,7 @@ def main() -> None:
             vamigats_sha=vamigats_sha,
             build_profile=BUILD_PROFILE,
             wall_time=wall_time,
+            init=init_report,
         )
         print(f"\nReport written to:\n  {md_path}\n  {json_path}")
 

@@ -185,6 +185,45 @@ in case (`vblank1_ecs.retrosh` saves `vblank1_ECS`); on a case-insensitive file
 system (Windows, macOS) stage with `git rm -r -q --cached . && git add -A`, so
 such renames reach git.
 
+## Experimental: FPGA start values
+
+Verilator starts every register at 0. On the FPGA, Gowin gives every
+flip-flop the start value of its primitive, and the set/preset types (DFFS,
+DFFSE, DFFP, DFFPE) start at 1. Which register becomes such a type is the
+synthesis' choice: in one NanoMig tree, 360 of the 5739 flip-flops below the
+core start at 1. A change that only works from all zeros can pass every
+simulation and still fail on the board after a cold start.
+
+`--init fpga:<list>` simulates from the FPGA's start values instead. The list
+comes from the Gowin netlist of exactly the tree under test. Each line holds
+an instance path below the core (empty for the core itself), a register and a
+bit (`-` for a one-bit register), separated by tabs. Two `#` lines are read:
+`# nanomig <sha>` (required) and `# gowin <version>`.
+
+```sh
+HARNESS_INIT=fpga-init.tsv NANOMIG_DIR=~/NanoMig harness/build.sh build-fpga
+python3 -m loader.run_all Agnus/DDF --out runs/fpga-ddf --harness build-fpga/nanomig_harness \
+    --nanomig-dir ~/NanoMig --init fpga:fpga-init.tsv
+```
+
+- **The build** stops if the list was made from another NanoMig commit. It
+  compiles the list into the harness and makes only the listed registers
+  writable. It reports names it cannot resolve, such as synthesis names like
+  `cck_Z` or `htotal_reg_2`, and registers of code the simulation leaves out,
+  such as `uart_port`. It does not guess them.
+- **The harness** sets the listed bits to 1 before the first evaluation, so
+  the reset acts on them as it does on the board.
+  `nanomig_harness --init-info` prints the list, how many bits it set and
+  which it could not.
+- **`run_all`** checks that the list matches `--nanomig-dir` and that the
+  harnesses were built with this list. It refuses a harness built with a list
+  when `--init` is not given.
+- **Every result** records `"init": "fpga (experimental)"`, the list's
+  SHA-256, its Gowin version and the counts. The report names them.
+- **No mixing:** such results never share an `--out` with results that start
+  from zero or from another list (`init.json` marks the directory), and
+  `publish` refuses them.
+
 ## Adding a test
 
 The tests are vAmigaTS's. A new or changed test needs, in a vAmigaTS
@@ -223,7 +262,7 @@ vAmigaTS.
 | path | |
 |---|---|
 | `harness/` | `harness.cpp`, `build.sh`, `taps.vlt`, `inputs_tb.py` |
-| `loader/` | script parser, capture, mask, comparison, `run_test`, `run_all`, report, `side_by_side`, `recompare`, `publish`, `vs_published`, `vs_manual` |
+| `loader/` | script parser, capture, mask, comparison, `run_test`, `run_all`, report, `side_by_side`, `recompare`, `publish`, `vs_published`, `vs_manual`, `init_list` (experimental FPGA start values) |
 | `tests/` | selftests |
 | `external/` | the two pinned submodules |
 | `roms/`, `build/`, `build-*/`, `runs/`, `side-by-side/` | local only, ignored by git |
@@ -246,6 +285,8 @@ vAmigaTS.
   through the FPGA companion's protocol.
 - A `FAIL` says that NanoMig's frame differs from the reference. It does not
   say why. The side-by-side images show where.
+- Every register starts at 0, as Verilator starts it; on the FPGA some start
+  at 1. See [Experimental: FPGA start values](#experimental-fpga-start-values).
 - `ENABLE_AT_MODEM`, which NanoMig's Tang Nano 20k profile sets, stays
   undefined: it routes Paula's UART through a 16-byte FIFO to the FPGA
   companion, which the simulation does not have, so a UART test sending more

@@ -23,8 +23,9 @@ class TestPublish(unittest.TestCase):
         forked = (Path("b/result.json"), {"class": "PASS", "nanomig_sha": "0f3d2fd", "zygote_fork_at_s": 3.5})
         shortened = (Path("d/result.json"), {"class": "FAIL", "nanomig_sha": "0f3d2fd", "test_wait_s": 1.0})
         dirty = (Path("c/result.json"), {"class": "FAIL", "nanomig_sha": "0f3d2fd-dirty"})
+        fpga = (Path("e/result.json"), {"class": "PASS", "nanomig_sha": "0f3d2fd", "init": "fpga (experimental)"})
         check_publishable([single])
-        for experimental in (forked, shortened):
+        for experimental in (forked, shortened, fpga):
             with self.assertRaisesRegex(RuntimeError, "experimental"):
                 check_publishable([single, experimental])
         with self.assertRaisesRegex(RuntimeError, "uncommitted"):

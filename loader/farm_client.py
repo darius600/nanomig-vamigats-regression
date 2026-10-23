@@ -99,12 +99,13 @@ def job_for(jid: int, config: Any, harness_bin: Path, kick_rom: Path, sha: Calla
 
 
 def result_from(entry: Dict[str, Any], retrosh: Path, config: Any, out_path: Path, kick_rom: Path,
-                shas: Dict[str, str], capture: Optional[bytes]) -> Dict[str, Any]:
+                shas: Dict[str, str], capture: Optional[bytes],
+                init: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """result.json for a job a worker ran, filled in exactly as run_test does."""
     prepare_out_dir(out_path)
     now = datetime.now().astimezone().isoformat()
     result = new_result(config, retrosh, shas["nanomig"], shas["vamigats"], shas["regression"],
-                        entry.get("start") or now)
+                        entry.get("start") or now, init)
     result["harness_args"] = harness_args_for(kick_rom, config)
     result["simulated_on"] = entry["machine"]
     result["kick_sha1"] = file_sha1(kick_rom)   # the worker got these very bytes
@@ -137,8 +138,10 @@ def result_from(entry: Dict[str, Any], retrosh: Path, config: Any, out_path: Pat
 def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[str, Dict[str, Any]], *,
              harness: Optional[str], kick_rom: Path, shas: Dict[str, str], label: str, owner: str,
              priority: int, report: Callable[[Dict[str, Any], Any], None],
-             inputs_harness: Optional[str] = None, offline_ok: bool = False) -> List[Tuple[Path, Path, Any]]:
+             inputs_harness: Optional[str] = None, offline_ok: bool = False,
+             init: Optional[Dict[str, Any]] = None) -> List[Tuple[Path, Path, Any]]:
     """Simulates items [(retrosh, out dir, config)] through the queue, filling in results.
+    init: what run_test records about an EXPERIMENTAL start state (see run_test.new_result).
 
     Returns the items left undone when it gave up (see GIVE_UP_S); run_all simulates
     those itself."""
@@ -163,7 +166,7 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
             # run_test classifies these without simulating (no input harness, a missing file)
             res = run_test(rf, var_out, harness_path=harness, nanomig_sha=shas["nanomig"],
                            vamigats_sha=shas["vamigats"], regression_sha=shas["regression"],
-                           inputs_harness_path=inputs_harness)
+                           inputs_harness_path=inputs_harness, init=init)
             results[str(rf)] = res
             report(res, cfg)
             continue
@@ -217,10 +220,10 @@ def simulate(client: Client, items: List[Tuple[Path, Path, Any]], results: Dict[
                         except OSError:
                             break   # fetch it with the next poll
                         try:
-                            res = result_from(entry, rf, cfg, var_out, kick_rom, shas, capture)
+                            res = result_from(entry, rf, cfg, var_out, kick_rom, shas, capture, init)
                         except Exception as e:
                             res = new_result(cfg, rf, shas["nanomig"], shas["vamigats"], shas["regression"],
-                                             entry.get("start") or datetime.now().astimezone().isoformat())
+                                             entry.get("start") or datetime.now().astimezone().isoformat(), init)
                             res["detail"] = f"Worker error: {e}"
                             var_out.mkdir(parents=True, exist_ok=True)
                             (var_out / "result.json").write_text(json.dumps(res, indent=2))

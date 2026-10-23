@@ -121,13 +121,15 @@ def prepare_out_dir(out_path: Path) -> None:
 
 
 def new_result(config: Any, retrosh_path: Path, nanomig_sha: str, vamigats_sha: str,
-               regression_sha: str, start_time: str) -> Dict[str, Any]:
-    """The result.json skeleton every simulated variant gets."""
+               regression_sha: str, start_time: str, init: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The result.json skeleton every simulated variant gets. init: the fields of an
+    EXPERIMENTAL run with FPGA start values (loader.init_list.result_fields); a normal run
+    starts from zero and has none."""
     try:
         rel_retrosh = str(retrosh_path.relative_to(VAMIGATS_ROOT).as_posix())
     except ValueError:
         rel_retrosh = str(retrosh_path.as_posix())
-    return {
+    result = {
         "variant": config.variant,
         "class": "ERROR",
         "detail": "",
@@ -145,6 +147,8 @@ def new_result(config: Any, retrosh_path: Path, nanomig_sha: str, vamigats_sha: 
         "differing_pixels": None,
         "raw_status": None,
     }
+    result.update(init or {})
+    return result
 
 
 def harness_args_for(kick_rom: Path, config: Any) -> List[str]:
@@ -246,6 +250,7 @@ def run_test(
     vamigats_sha: Optional[str] = None,
     regression_sha: Optional[str] = None,
     inputs_harness_path: Path | str | None = None,
+    init: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Executes a single test script end-to-end and writes result.json.
     
@@ -269,7 +274,7 @@ def run_test(
         vamigats_sha = get_git_sha(VAMIGATS_ROOT)
     if regression_sha is None:
         regression_sha = get_git_revision(REPO_ROOT)
-    result = new_result(config, retrosh_path, nanomig_sha, vamigats_sha, regression_sha, start_time)
+    result = new_result(config, retrosh_path, nanomig_sha, vamigats_sha, regression_sha, start_time, init)
 
     # If configuration is unsupported / deviating, do not simulate
     if not config.runnable:
