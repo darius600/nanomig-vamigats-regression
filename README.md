@@ -208,9 +208,10 @@ python3 -m loader.run_all Agnus/DDF --out runs/fpga-ddf --harness build-fpga/nan
 
 - **The build** stops if the list was made from another NanoMig commit. It
   compiles the list into the harness and makes only the listed registers
-  writable. It reports names it cannot resolve, such as synthesis names like
-  `cck_Z` or `htotal_reg_2`, and registers of code the simulation leaves out,
-  such as `uart_port`. It does not guess them.
+  visible to it, read-only, so the simulation runs about as fast as one
+  that starts from zero. It reports names it cannot resolve, such as
+  synthesis names like `cck_Z` or `htotal_reg_2`, and registers of code the
+  simulation leaves out, such as `uart_port`. It does not guess them.
 - **The harness** sets the listed bits to 1 before the first evaluation, so
   the reset acts on them as it does on the board.
   `nanomig_harness --init-info` prints the list, how many bits it set and

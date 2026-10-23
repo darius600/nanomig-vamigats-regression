@@ -79,9 +79,9 @@ class TestInitList(unittest.TestCase):
         tree.write_text(json.dumps(TREE))
         unresolved = init_list.generate(init_list.parse(self.list), tree, self.dir / "init")
         vlt = (self.dir / "init" / "init.vlt").read_text()
-        self.assertIn('public_flat_rw -module "agnus_bitplanedma" -var "ddfrun"', vlt)
-        self.assertIn('public_flat_rw -module "agnus_beamcounter" -var "htotal_reg"', vlt)
-        self.assertIn('public_flat_rw -module "nanomig" -var "reset_d"', vlt)
+        self.assertIn('public_flat_rd -module "agnus_bitplanedma" -var "ddfrun"', vlt)
+        self.assertIn('public_flat_rd -module "agnus_beamcounter" -var "htotal_reg"', vlt)
+        self.assertIn('public_flat_rd -module "nanomig" -var "reset_d"', vlt)
         self.assertNotIn("ddfend", vlt)
         # synthesis names are reported, not guessed
         self.assertEqual([(i, r) for i, r, _, _ in unresolved],
