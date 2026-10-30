@@ -33,6 +33,17 @@ echo "  Source root:  $REPO_ROOT"
 echo "  NanoMig:      $NANOMIG_DIR"
 echo "  Build dir:    $BUILD_DIR"
 
+# The source lists and flags below are split on spaces, so these paths must have none
+NO_SPACES=("$NANOMIG_DIR")
+if [ -n "$INIT_LIST" ]; then
+    NO_SPACES+=("$BUILD_DIR" "$INIT_LIST")
+fi
+for p in "${NO_SPACES[@]}"; do
+    case "$p" in
+        *[[:space:]]*) echo "build.sh: paths with spaces are not supported: $p" >&2; exit 1 ;;
+    esac
+done
+
 mkdir -p "$BUILD_DIR"
 BUILD_DIR=$(realpath "$BUILD_DIR")
 cd "$BUILD_DIR"
