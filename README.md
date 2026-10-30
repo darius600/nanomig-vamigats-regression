@@ -198,7 +198,8 @@ simulation and still fail on the board after a cold start.
 comes from the Gowin netlist of exactly the tree under test. Each line holds
 an instance path below the core (empty for the core itself), a register and a
 bit (`-` for a one-bit register), separated by tabs. Two `#` lines are read:
-`# nanomig <sha>` (required) and `# gowin <version>`.
+`# nanomig <sha>` (required) and `# gowin <version>`. The tool that extracts
+such a list from a netlist is not part of this repository.
 
 ```sh
 HARNESS_INIT=fpga-init.tsv NANOMIG_DIR=~/NanoMig harness/build.sh build-fpga
