@@ -8,6 +8,8 @@
 # HARNESS_INIT=<list.tsv> (EXPERIMENTAL) builds a harness that starts from the FPGA's start
 # values instead of all zeros: the list (made from the Gowin netlist of exactly this NanoMig
 # commit) is compiled in, see loader/init_list.py. Combines with HARNESS_INPUTS=1.
+# HARNESS_TREE=1 builds no harness: it writes the design as Verilator elaborates it to
+# <build-dir>/tree/Vnanomig_tb.tree.json, which loader/gowin_init.py resolves a list against.
 set -e
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -76,6 +78,14 @@ HDL="$TB $NANOMIG_DIR/sim/sdr_chip_model.v $MINIMIG $FX $MISC $NANOMIG_DIR/sim/T
 VLT="$SCRIPT_DIR/taps.vlt"
 VFLAGS="$DEFINES -Wno-fatal -Wno-BLKANDNBLK -Wno-lint -Wno-style --no-timing --no-assert \
   -I$NANOMIG_DIR/sim -I$NANOMIG_DIR/src/fx68k -top-module nanomig_tb"
+
+if [ -n "$HARNESS_TREE" ]; then
+    rm -rf "$BUILD_DIR/tree"
+    verilator --json-only $VFLAGS $HDL --Mdir "$BUILD_DIR/tree" > "$BUILD_DIR/tree.log" 2>&1 \
+        || { tail -30 "$BUILD_DIR/tree.log"; exit 1; }
+    echo "Tree complete: $BUILD_DIR/tree/Vnanomig_tb.tree.json"
+    exit 0
+fi
 
 if [ -n "$INIT_LIST" ]; then
     # The list must come from this commit's netlist; the design's hierarchy says which module

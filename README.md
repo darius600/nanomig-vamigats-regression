@@ -198,10 +198,22 @@ simulation and still fail on the board after a cold start.
 comes from the Gowin netlist of exactly the tree under test. Each line holds
 an instance path below the core (empty for the core itself), a register and a
 bit (`-` for a one-bit register), separated by tabs. Two `#` lines are read:
-`# nanomig <sha>` (required) and `# gowin <version>`. The tool that extracts
-such a list from a netlist is not part of this repository.
+`# nanomig <sha>` (required) and `# gowin <version>`.
+
+`loader/gowin_init.py` makes the list. It needs the netlist that GowinSynthesis
+wrote for the Tang Nano 20k project (`impl/gwsynthesis/nanomig.vg`; the
+Education edition encrypts it, the standard edition does not) and the Gowin
+installation, whose simulation library holds the primitives' start values.
+It names each register after its cell, as the synthesis derived the cell from
+the RTL. It resolves every name against the design as the harness elaborates
+it (`HARNESS_TREE=1 harness/build.sh`), including registers declared in a
+procedural block. Flip-flops of code the harness leaves out, such as
+`uart_port`, become comment lines with the reason. It refuses a checkout with
+uncommitted changes, and a netlist whose source files differ from the
+checkout's.
 
 ```sh
+python3 -m loader.gowin_init ~/nanomig-gowin/impl/gwsynthesis/nanomig.vg ~/gowin ~/NanoMig --out fpga-init.tsv
 HARNESS_INIT=fpga-init.tsv NANOMIG_DIR=~/NanoMig harness/build.sh build-fpga
 python3 -m loader.run_all Agnus/DDF --out runs/fpga-ddf --harness build-fpga/nanomig_harness \
     --nanomig-dir ~/NanoMig --init fpga:fpga-init.tsv
@@ -211,8 +223,8 @@ python3 -m loader.run_all Agnus/DDF --out runs/fpga-ddf --harness build-fpga/nan
   compiles the list into the harness and makes only the listed registers
   visible to it, read-only, so the simulation runs about as fast as one
   that starts from zero. It reports names it cannot resolve, such as
-  synthesis names like `cck_Z` or `htotal_reg_2`, and registers of code the
-  simulation leaves out, such as `uart_port`. It does not guess them.
+  synthesis names like `cck_Z` or `htotal_reg_2` in a list not made by
+  `gowin_init`. It does not guess them.
 - **The harness** sets the listed bits to 1 before the first evaluation, so
   the reset acts on them as it does on the board.
   `nanomig_harness --init-info` prints the list, how many bits it set and

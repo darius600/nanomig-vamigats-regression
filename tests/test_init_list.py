@@ -91,6 +91,27 @@ class TestInitList(unittest.TestCase):
         self.assertIn('{"", "reset_d", -1},', header)
         self.assertIn(init_list.parse(self.list).sha256, header)
 
+    def test_a_register_of_a_procedural_block_is_set_in_the_block_scope(self):
+        # nanomig.v: always @(...) begin reg [7:0] reset_s; ... end; Verilator names the block
+        # unnamedblk1 and gives it a scope of its own
+        tree = json.loads(json.dumps(TREE))
+        tree["miscsp"] = [{"type": "TYPETABLE", "typesp": [
+            {"type": "BASICDTYPE", "addr": "(T8)", "keyword": "logic", "range": "7:0"},
+            {"type": "BASICDTYPE", "addr": "(T1)", "keyword": "logic"}]}]
+        core = tree["modulesp"][1]
+        core["stmtsp"].append({"type": "ALWAYS", "stmtsp": [{"type": "BEGIN", "name": "unnamedblk1", "declsp": [
+            {"type": "VAR", "name": "reset_s", "dtypep": "(T8)"}, {"type": "VAR", "name": "rs", "dtypep": "(T1)"}]}]})
+        (self.dir / "tree.json").write_text(json.dumps(tree))
+        self.list.write_text("# nanomig a34b864\n\treset_s\t0\n\treset_s\t8\n\trs\t-\n\treset_s\t-\n")
+        unresolved = init_list.generate(init_list.parse(self.list), self.dir / "tree.json", self.dir / "init")
+        self.assertEqual([(r, b, why) for _, r, b, why in unresolved],
+                         [("reset_s", 8, "bit out of range [7:0]"), ("reset_s", None, "no bit given for a vector")])
+        self.assertIn('public_flat_rd -module "nanomig" -var "reset_s"', (self.dir / "init" / "init.vlt").read_text())
+        header = (self.dir / "init" / "init_list.h").read_text()
+        self.assertIn('{"unnamedblk1", "reset_s", 0},', header)
+        self.assertIn('{"unnamedblk1", "rs", -1},', header)
+        self.assertIn('{"", "reset_s", 8},', header)   # not resolved: tried as listed, reported by the harness
+
     def test_signature(self):
         self.assertEqual(init_list.signature({"class": "PASS"}), ("zero", None))   # results from before --init
         fields = init_list.result_fields(init_list.parse(self.list), {"set": 3, "unresolved": [[], [], []]})

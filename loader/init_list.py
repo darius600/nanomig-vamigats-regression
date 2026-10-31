@@ -15,10 +15,11 @@ are read:
     # nanomig <sha> ...      the NanoMig commit the netlist was made from (required)
     # gowin <version> ...    the Gowin version that made it
 
-HARNESS_INIT=<list> harness/build.sh <dir> builds a harness of its own with the list compiled
-in. It sets the listed bits to 1 before the first evaluation, so the reset then acts on them
-as it does on the FPGA. Names it cannot resolve (synthesis names such as cck_Z or
-htotal_reg_2) are reported, not guessed.
+loader/gowin_init.py makes such a list from the netlist. HARNESS_INIT=<list> harness/build.sh
+<dir> builds a harness of its own with the list compiled in. It sets the listed bits to 1
+before the first evaluation, so the reset then acts on them as it does on the FPGA. A register
+declared in a procedural block is found there. Names it cannot resolve (synthesis names such
+as cck_Z or htotal_reg_2) are reported, not guessed.
 
 Build steps (called by harness/build.sh):
     python3 -m loader.init_list check <list> <nanomig-dir>
@@ -137,30 +138,109 @@ def _children(node: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
                     yield x
 
 
-def hierarchy(tree: Dict[str, Any]) -> Dict[str, Tuple[str, set]]:
-    """{instance path below the core: (module name, its variable names)} from Verilator's
+BLOCKS = ("BEGIN", "GENBLOCK", "GENFOR", "GENIF", "GENCASE")
+
+
+def _join(*parts: str) -> str:
+    return ".".join(p for p in parts if p)
+
+
+@dataclass
+class Var:
+    """A variable as the harness reaches it."""
+    scope: str                        # instance path below the core, or a block in it: Verilator gives
+                                      # a block with declarations a scope of its own (named after the
+                                      # block; unnamed ones unnamedblk1, unnamedblk2, ...)
+    kind: str = "other"               # "bit" (one bit), "vector" (one packed range) or "other"
+    range: Tuple[int, int] = (0, 0)   # (left, right) of a vector
+
+    def bit_problem(self, bit: Optional[int]) -> Optional[str]:
+        """Why <bit> (None: a one-bit register) names no bit of this variable, or None.
+        Variables of other types are left to the harness."""
+        if self.kind == "other":
+            return None
+        if bit is None:
+            return None if self.kind == "bit" else "no bit given for a vector"
+        if self.kind == "bit":
+            return "bit given for a one-bit register"
+        lo, hi = sorted(self.range)
+        return None if lo <= bit <= hi else f"bit out of range [{self.range[0]}:{self.range[1]}]"
+
+
+def _kind(dtype: Optional[Dict[str, Any]]) -> Tuple[str, Tuple[int, int]]:
+    if not dtype or dtype.get("type") != "BASICDTYPE" or dtype.get("keyword") not in ("logic", "bit"):
+        return "other", (0, 0)
+    if "range" not in dtype:
+        return "bit", (0, 0)
+    try:
+        left, right = (int(x) for x in dtype["range"].split(":"))
+    except ValueError:
+        return "other", (0, 0)
+    return "vector", (left, right)
+
+
+def _module_vars(mod: Dict[str, Any]) -> Dict[str, List[Tuple[str, Dict[str, Any]]]]:
+    """{variable name: [(block path in the module, VAR node)]}: the module's own variables
+    (block "") and those declared in its procedural and generate blocks. Iterative: if/else
+    chains nest deeper than Python's recursion limit."""
+    found: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+    stack = [(mod, "")]
+    while stack:
+        node, block = stack.pop()
+        for x in _children(node):
+            t = x.get("type")
+            if t == "VAR":
+                if not x["name"].startswith("__V"):
+                    found.setdefault(x["name"], []).append((block, x))
+            elif t not in ("CELL", "FUNC", "TASK"):   # instances are walked on their own
+                stack.append((x, _join(block, x.get("name", "") if t in BLOCKS else "")))
+    return found
+
+
+def hierarchy(tree: Dict[str, Any]) -> Dict[str, Tuple[str, Dict[str, List[Var]]]]:
+    """{instance path below the core: (module name, {variable name: [Var]})} from Verilator's
     --json-only tree; "" is the core itself."""
     by_addr = {m["addr"]: m for m in tree["modulesp"]}
+    types = {t["addr"]: t for misc in tree.get("miscsp", []) if misc.get("type") == "TYPETABLE"
+             for t in misc.get("typesp", [])}
     top = next(m for m in tree["modulesp"] if m.get("origName") == "nanomig_tb")
 
     def cells(mod: Dict[str, Any], prefix: str = "") -> Iterator[Tuple[str, Dict[str, Any]]]:
         for x in _children(mod):
             if x.get("type") == "CELL":
                 yield prefix + x["name"], by_addr[x["modp"]]
-            elif x.get("type") in ("BEGIN", "GENBLOCK", "GENFOR", "GENIF", "GENCASE"):
+            elif x.get("type") in BLOCKS:
                 yield from cells(x, prefix + (f"{x['name']}." if x.get("name") else ""))
 
     root = next(m for name, m in cells(top) if name == ROOT_CELL)
-    out: Dict[str, Tuple[str, set]] = {}
+    out: Dict[str, Tuple[str, Dict[str, List[Var]]]] = {}
+    tables: Dict[str, Dict[str, List[Tuple[str, Dict[str, Any]]]]] = {}
 
     def walk(mod: Dict[str, Any], path: str) -> None:
-        names = {x["name"] for x in _children(mod) if x.get("type") == "VAR"}
+        if mod["addr"] not in tables:
+            tables[mod["addr"]] = _module_vars(mod)
+        names = {name: [Var(_join(path, block), *_kind(types.get(x.get("dtypep", "")))) for block, x in found]
+                 for name, found in tables[mod["addr"]].items()}
         out[path] = (mod.get("origName") or mod["name"], names)
         for name, sub in cells(mod):
-            walk(sub, f"{path}.{name}" if path else name)
+            walk(sub, _join(path, name))
 
     walk(root, "")
     return out
+
+
+def lookup(hier: Dict[str, Tuple[str, Dict[str, List[Var]]]], inst: str, reg: str) -> Tuple[Optional[Var], str]:
+    """The variable <reg> of instance <inst>, declared in its module or in one of the module's
+    blocks, or None and why not."""
+    if inst not in hier:
+        return None, "no such instance"
+    module, names = hier[inst]
+    found = names.get(reg, [])
+    if not found:
+        return None, f"no variable {reg} in module {module}"
+    if len(found) > 1:
+        return None, f"{len(found)} variables {reg} in module {module} ({', '.join(v.scope or '(core)' for v in found)})"
+    return found[0], ""
 
 
 def _c_str(s: str) -> str:
@@ -171,14 +251,17 @@ def generate(lst: InitList, tree_json: Path, out_dir: Path) -> List[Tuple[str, s
     """Writes init.vlt (the listed registers public) and init_list.h (the list for harness.cpp)
     into out_dir; returns the entries that cannot be resolved, with the reason."""
     hier = hierarchy(json.loads(Path(tree_json).read_text()))
-    public, unresolved = set(), []
+    public, unresolved, scoped = set(), [], []
     for inst, reg, bit in lst.entries:
-        if inst not in hier:
-            unresolved.append((inst, reg, bit, "no such instance"))
-        elif reg not in hier[inst][1]:
-            unresolved.append((inst, reg, bit, f"no variable {reg} in module {hier[inst][0]}"))
+        var, why = lookup(hier, inst, reg)
+        why = why or var.bit_problem(bit)
+        if why:
+            unresolved.append((inst, reg, bit, why))
         else:
             public.add((hier[inst][0], reg))
+        # The harness tries every entry, in the scope that holds the register, and reports
+        # the ones it cannot set (--init-info)
+        scoped.append((var.scope if var and not why else inst, reg, bit))
     out_dir.mkdir(parents=True, exist_ok=True)
     # Read-only public is enough: the harness writes the bits once, before the first evaluation,
     # which computes everything from the stored state. public_flat_rw would make Verilator assume
@@ -188,15 +271,16 @@ def generate(lst: InitList, tree_json: Path, out_dir: Path) -> List[Tuple[str, s
            "// The registers the FPGA start values are written to before the first evaluation."]
     vlt += [f'public_flat_rd -module "{m}" -var "{v}"' for m, v in sorted(public)]
     (out_dir / "init.vlt").write_text("\n".join(vlt) + "\n")
-    rows = [f"  {{{_c_str(inst)}, {_c_str(reg)}, {-1 if bit is None else bit}}},"
-            for inst, reg, bit in lst.entries]
+    rows = [f"  {{{_c_str(scope)}, {_c_str(reg)}, {-1 if bit is None else bit}}},"
+            for scope, reg, bit in scoped]
     header = [
         f"// Generated by loader/init_list.py from {lst.path.name}. EXPERIMENTAL.",
         f"static const char *const INIT_LIST_NAME = {_c_str(lst.path.name)};",
         f"static const char *const INIT_LIST_SHA256 = {_c_str(lst.sha256)};",
         f"static const char *const INIT_LIST_NANOMIG = {_c_str(lst.nanomig or '')};",
         f"static const char *const INIT_LIST_GOWIN = {_c_str(lst.gowin or '')};",
-        "struct InitBit { const char *path; const char *var; int bit; };   // bit -1: a one-bit register",
+        "// path: the scope below the core (an instance, or a block in it); bit -1: a one-bit register",
+        "struct InitBit { const char *path; const char *var; int bit; };",
         "static const InitBit INIT_BITS[] = {",
         *rows,
         "};",
